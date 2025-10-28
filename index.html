@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    
+    <!-- Security Headers -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; script-src 'self' 'unsafe-inline'; connect-src 'self';">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta http-equiv="X-Frame-Options" content="DENY">
+    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+    <meta http-equiv="Permissions-Policy" content="geolocation=(), microphone=(), camera=()">
+    
+    <!-- SEO & Social Media -->
+    <meta name="description" content="Shoaib Akhtar Guided by faith, grounded in values.">
+    <meta name="keywords" content="Shoaib Akhtar, Cybersecurity Engineer, IAM, Identity Access Management">
+    <meta name="author" content="Shoaib Akhtar">
+    <meta name="robots" content="index, follow">
+    
+    <title>Shoaib Akhtar - Cybersecurity Professional | Profile</title>
+    
+    <!-- Performance: Preconnect to external domains -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- Fonts with display swap for better performance -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&family=Amiri:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&family=Amiri:wght@400;700&display=swap" rel="stylesheet"></noscript>
+    
+    <!-- Theme Color for Mobile Browsers -->
+    <meta name="theme-color" content="#fbfbfd" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#1d1d1f" media="(prefers-color-scheme: dark)">
+    
+    <style>
+        /* Modern CSS Reset */
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        /* CSS Custom Properties with Dark Mode Support */
+        :root {
+            /* Light Mode Colors */
+            --apple-white: #fbfbfd;
+            --apple-light-gray: #f5f5f7;
+            --apple-gray: #d2d2d7;
+            --apple-medium-gray: #86868b;
+            --apple-dark-gray: #6e6e73;
+            --apple-text: #1d1d1f;
+            --apple-black: #000000;
+            --apple-blue: #0071e3;
+            --apple-blue-hover: #0077ed;
+            
+            /* Spacing Scale */
+            --space-xs: 0.5rem;
+            --space-sm: 1rem;
+            --space-md: 1.5rem;
+            --space-lg: 2rem;
+            --space-xl: 3rem;
+            --space-2xl: 4rem;
+            
+            /* Typography Scale */
+            --text-xs: 0.75rem;
+            --text-sm: 0.875rem;
+            --text-base: 1rem;
+            --text-lg: 1.125rem;
+            --text-xl: 1.25rem;
+            --text-2xl: 1.5rem;
+            --text-3xl: 2rem;
+            --text-4xl: 3rem;
+            --text-5xl: 4rem;
+            --text-6xl: 6rem;
+            
+            /* Border Radius */
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 18px;
+            --radius-xl: 24px;
+            
+            /* Shadows */
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+            --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
+            --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+            --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.16);
+            
+            /* Transitions */
+            --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-base: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-slow: 500ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Dark Mode Support */
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --apple-white: #1d1d1f;
+                --apple-light-gray: #2d2d2f;
+                --apple-gray: #424245;
+                --apple-medium-gray: #86868b;
+                --apple-dark-gray: #a1a1a6;
+                --apple-text: #f5f5f7;
+                --apple-black: #f5f5f7;
+                --apple-blue: #2997ff;
+                --apple-blue-hover: #409cff;
+            }
+        }
+
+        /* Base Styles */
+        html {
+            scroll-behavior: smooth;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', 'Inter', system-ui, sans-serif;
+            color: var(--apple-text);
+            line-height: 1.6;
+            background: var(--apple-white);
+            overflow-x: hidden;
+            min-height: 100vh;
+            position: relative;
+        }
+
+        /* Accessibility: Focus Styles */
+        *:focus-visible {
+            outline: 2px solid var(--apple-blue);
+            outline-offset: 2px;
+            border-radius: var(--radius-sm);
+        }
+
+        /* Skip to main content for screen readers */
+        .skip-to-content {
+            position: absolute;
+            top: -40px;
+            left: 0;
+            background: var(--apple-blue);
+            color: white;
+            padding: var(--space-sm) var(--space-md);
+            text-decoration: none;
+            z-index: 100;
+            border-radius: var(--radius-sm);
+        }
+
+        .skip-to-content:focus {
+            top: var(--space-sm);
+            left: var(--space-sm);
+        }
+
+        /* Bismillah Section */
+        .bismillah-section {
+            text-align: center;
+            padding: clamp(2rem, 5vw, 3.125rem) var(--space-lg) clamp(1.5rem, 3vw, 1.875rem);
+            background: var(--apple-white);
+            position: relative;
+            border-bottom: 1px solid var(--apple-gray);
+        }
+
+        .bismillah-text {
+            font-family: 'Amiri', serif;
+            font-size: clamp(1.5rem, 4vw, 2rem);
+            color: var(--apple-text);
+            margin-bottom: var(--space-sm);
+            animation: fadeInDown 1s ease-out;
+            font-weight: 400;
+        }
+
+        .bismillah-translation {
+            font-size: clamp(0.625rem, 1.5vw, 0.75rem);
+            color: var(--apple-dark-gray);
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            animation: fadeInDown 1s ease-out 0.2s both;
+        }
+
+        /* Hero Section */
+        .hero {
+            position: relative;
+            height: clamp(500px, 70vh, 800px);
+            overflow: hidden;
+            background: var(--apple-light-gray);
+            contain: layout style paint;
+        }
+
+        .hero-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: center 35%;
+            opacity: 0.95;
+            filter: brightness(1.15) contrast(1.05) saturate(1.1);
+            will-change: transform;
+            transform: translateZ(0);
+        }
+
+        /* Gradient Overlay */
+        .hero-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 50%;
+            background: linear-gradient(to bottom, 
+                transparent 0%, 
+                rgba(251, 251, 253, 0.1) 30%,
+                rgba(251, 251, 253, 0.6) 70%,
+                rgba(251, 251, 253, 0.95) 100%);
+            z-index: 1;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .hero-overlay {
+                background: linear-gradient(to bottom, 
+                    transparent 0%, 
+                    rgba(29, 29, 31, 0.1) 30%,
+                    rgba(29, 29, 31, 0.6) 70%,
+                    rgba(29, 29, 31, 0.95) 100%);
+            }
+        }
+
+        .hero-content {
+            position: absolute;
+            bottom: clamp(3rem, 10vh, 6.25rem);
+            left: 0;
+            right: 0;
+            text-align: center;
+            z-index: 2;
+            padding: 0 var(--space-lg);
+        }
+
+        .hero-name {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', serif;
+            font-size: clamp(3rem, 8vw, 6rem);
+            font-weight: 700;
+            color: var(--apple-black);
+            margin-bottom: var(--space-md);
+            letter-spacing: -0.03em;
+            animation: fadeInUp 1s ease-out 0.3s both;
+            line-height: 1.1;
+        }
+
+        .hero-divider {
+            width: 100px;
+            height: 1px;
+            background: var(--apple-gray);
+            margin: 0 auto var(--space-lg);
+            animation: fadeInUp 1s ease-out 0.4s both;
+        }
+
+        .hero-tagline {
+            font-size: clamp(0.875rem, 2vw, 1.2rem);
+            color: var(--apple-dark-gray);
+            font-weight: 400;
+            letter-spacing: 0.03em;
+            animation: fadeInUp 1s ease-out 0.5s both;
+        }
+
+        /* Main Content */
+        main.container {
+            max-width: min(1200px, 90vw);
+            margin: 0 auto;
+            padding: clamp(3rem, 10vw, 7.5rem) clamp(1.25rem, 3vw, 2.5rem);
+            background: var(--apple-white);
+        }
+
+        /* Section Styling */
+        .section {
+            margin-bottom: clamp(4rem, 10vw, 7.5rem);
+            opacity: 0;
+            transform: translateY(40px);
+            animation: fadeInUp 0.8s ease-out forwards;
+        }
+
+        .section-header {
+            margin-bottom: clamp(2.5rem, 5vw, 3.75rem);
+        }
+
+        .section-title {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+            font-size: clamp(2rem, 5vw, 3.5rem);
+            font-weight: 700;
+            margin-bottom: var(--space-md);
+            color: var(--apple-black);
+            position: relative;
+            display: inline-block;
+            letter-spacing: -0.02em;
+            line-height: 1.2;
+        }
+
+        .section-title::after {
+            content: '';
+            position: absolute;
+            bottom: -0.9375rem;
+            left: 0;
+            width: 5rem;
+            height: 2px;
+            background: var(--apple-blue);
+        }
+
+        .section-subtitle {
+            font-size: var(--text-base);
+            color: var(--apple-dark-gray);
+            margin-top: var(--space-lg);
+            font-weight: 400;
+        }
+
+        /* About Section */
+        .about-content {
+            background: var(--apple-light-gray);
+            padding: clamp(2.5rem, 5vw, 3.75rem);
+            border-radius: var(--radius-lg);
+            position: relative;
+            transition: transform var(--transition-base), box-shadow var(--transition-base);
+        }
+
+        .about-content:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .about-content p {
+            font-size: clamp(1rem, 2vw, 1.15rem);
+            line-height: 1.7;
+            color: var(--apple-text);
+            margin-bottom: var(--space-lg);
+            font-weight: 400;
+        }
+
+        .about-content p:last-child {
+            margin-bottom: 0;
+        }
+
+        .about-highlight {
+            background: var(--apple-white);
+            padding: clamp(1.5rem, 3vw, 2.1875rem);
+            margin: var(--space-xl) 0;
+            border-left: 3px solid var(--apple-blue);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .about-content strong {
+            color: var(--apple-black);
+            font-weight: 600;
+        }
+
+        /* Faith Section */
+        .faith-box {
+            background: var(--apple-light-gray);
+            padding: clamp(2.5rem, 5vw, 3.125rem);
+            border-radius: var(--radius-lg);
+            text-align: center;
+            transition: transform var(--transition-base), box-shadow var(--transition-base);
+        }
+
+        .faith-box:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .faith-text {
+            font-size: clamp(1rem, 2vw, 1.2rem);
+            line-height: 1.7;
+            color: var(--apple-text);
+            max-width: 800px;
+            margin: 0 auto;
+            font-weight: 400;
+        }
+
+        /* Photo Gallery - Modern Grid */
+        .photo-gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+            gap: var(--space-lg);
+            margin-top: clamp(2.5rem, 5vw, 3.75rem);
+        }
+
+        .photo-item {
+            position: relative;
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            background: var(--apple-light-gray);
+            aspect-ratio: 3/4;
+            transition: transform var(--transition-base), box-shadow var(--transition-base);
+            box-shadow: var(--shadow-md);
+            cursor: pointer;
+        }
+
+        .photo-item:hover {
+            transform: translateY(-4px) scale(1.01);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .photo-item:active {
+            transform: translateY(-2px) scale(1);
+        }
+
+        .photo-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            transition: transform var(--transition-slow);
+        }
+
+        .photo-item:hover img {
+            transform: scale(1.05);
+        }
+
+        /* Info Grid */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+            gap: var(--space-lg);
+            margin-top: clamp(2.5rem, 5vw, 3.75rem);
+        }
+
+        .info-card {
+            background: var(--apple-light-gray);
+            padding: clamp(1.875rem, 4vw, 2.8125rem) clamp(1.5rem, 3vw, 2.1875rem);
+            transition: all var(--transition-base);
+            position: relative;
+            overflow: hidden;
+            border-radius: var(--radius-lg);
+            min-height: 120px;
+        }
+
+        .info-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: var(--apple-blue);
+            transform: scaleX(0);
+            transition: transform var(--transition-base);
+            transform-origin: left;
+        }
+
+        .info-card:hover {
+            background: var(--apple-gray);
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .info-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .info-label {
+            font-size: var(--text-xs);
+            color: var(--apple-dark-gray);
+            font-weight: 600;
+            margin-bottom: var(--space-sm);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .info-value {
+            font-size: clamp(1rem, 2vw, 1.2rem);
+            color: var(--apple-text);
+            font-weight: 500;
+            line-height: 1.5;
+        }
+
+        /* Family Section */
+        .two-column {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+            gap: var(--space-lg);
+            margin-top: clamp(2.5rem, 5vw, 3.75rem);
+        }
+
+        .family-card {
+            background: var(--apple-light-gray);
+            padding: clamp(2.5rem, 4vw, 3.125rem) clamp(1.875rem, 3vw, 2.5rem);
+            border-radius: var(--radius-lg);
+            transition: transform var(--transition-base), box-shadow var(--transition-base);
+        }
+
+        .family-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .family-member {
+            margin-bottom: var(--space-xl);
+            padding-bottom: var(--space-xl);
+            border-bottom: 1px solid var(--apple-gray);
+        }
+
+        .family-member:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        .family-label {
+            font-size: var(--text-xs);
+            color: var(--apple-dark-gray);
+            margin-bottom: var(--space-sm);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .family-value {
+            font-size: clamp(1rem, 2vw, 1.2rem);
+            color: var(--apple-text);
+            font-weight: 500;
+        }
+
+        /* Contact Section */
+        .contact-card {
+            background: var(--apple-light-gray);
+            color: var(--apple-text);
+            padding: clamp(3.75rem, 8vw, 5rem) clamp(2.5rem, 5vw, 3.75rem);
+            text-align: center;
+            margin-top: clamp(4rem, 8vw, 6.25rem);
+            position: relative;
+            border-radius: var(--radius-lg);
+            transition: transform var(--transition-base), box-shadow var(--transition-base);
+        }
+
+        .contact-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .contact-title {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+            font-size: clamp(2rem, 5vw, 3rem);
+            margin-bottom: var(--space-md);
+            color: var(--apple-black);
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .contact-subtitle {
+            font-size: clamp(1rem, 2vw, 1.1rem);
+            margin-bottom: clamp(2rem, 4vw, 3.125rem);
+            color: var(--apple-dark-gray);
+            font-weight: 400;
+        }
+
+        .contact-info {
+            font-size: clamp(1rem, 2vw, 1.1rem);
+            margin: var(--space-md) 0;
+            color: var(--apple-text);
+        }
+
+        .contact-info a {
+            color: var(--apple-blue);
+            text-decoration: none;
+            transition: all var(--transition-fast);
+            padding: var(--space-xs) var(--space-sm);
+            border-radius: var(--radius-sm);
+            display: inline-block;
+            position: relative;
+        }
+
+        .contact-info a::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 2px;
+            background: var(--apple-blue);
+            transition: width var(--transition-base);
+        }
+
+        .contact-info a:hover {
+            color: var(--apple-blue-hover);
+            background: rgba(0, 113, 227, 0.05);
+        }
+
+        .contact-info a:hover::after {
+            width: 80%;
+        }
+
+        .contact-info a:active {
+            transform: scale(0.98);
+        }
+
+        /* Touch Target Optimization for Mobile */
+        @media (hover: none) and (pointer: coarse) {
+            .contact-info a,
+            .info-card,
+            .family-card,
+            .photo-item {
+                min-height: 44px;
+                min-width: 44px;
+            }
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(40px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Staggered Animation Delays */
+        .section:nth-child(1) { animation-delay: 0.1s; }
+        .section:nth-child(2) { animation-delay: 0.2s; }
+        .section:nth-child(3) { animation-delay: 0.3s; }
+        .section:nth-child(4) { animation-delay: 0.4s; }
+        .section:nth-child(5) { animation-delay: 0.5s; }
+        .section:nth-child(6) { animation-delay: 0.6s; }
+
+        /* Reduce Motion for Accessibility */
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
+            }
+        }
+
+        /* Print Styles */
+        @media print {
+            body {
+                background: white;
+                color: black;
+            }
+
+            .bismillah-section,
+            .hero,
+            .about-content,
+            .info-card,
+            .family-card,
+            .contact-card {
+                background: white;
+                color: black;
+                box-shadow: none;
+            }
+
+            .hero {
+                height: 30vh;
+                page-break-after: avoid;
+            }
+
+            main.container {
+                padding: 30px;
+            }
+
+            .section {
+                page-break-inside: avoid;
+                animation: none;
+                opacity: 1;
+                transform: none;
+                margin-bottom: 40px;
+            }
+
+            .photo-item {
+                break-inside: avoid;
+            }
+
+            a {
+                text-decoration: underline;
+            }
+        }
+
+        /* Loading State */
+        .loading {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .loaded {
+            opacity: 1;
+            pointer-events: auto;
+            transition: opacity var(--transition-slow);
+        }
+
+        /* Smooth Scrollbar */
+        ::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--apple-light-gray);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--apple-medium-gray);
+            border-radius: 6px;
+            border: 2px solid var(--apple-light-gray);
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--apple-dark-gray);
+        }
+
+        /* High Contrast Mode Support */
+        @media (prefers-contrast: high) {
+            .section-title::after,
+            .info-card::before {
+                background: currentColor;
+            }
+            
+            .contact-info a {
+                text-decoration: underline;
+            }
+        }
+    </style>
+</head>
+<body class="loading">
+    <!-- Skip to main content for accessibility -->
+   <!-- <a href="#main-content" class="skip-to-content">Skip to main content</a> -->
+
+    <!-- Bismillah Section -->
+    <header class="bismillah-section" role="banner">
+        <div class="bismillah-text" aria-label="Bismillah in Arabic">بِسْمِ اللهِ الرَّحْمٰنِ الرَّحِيْمِ</div>
+        <div class="bismillah-translation">In the Name of Allah, The Most Gracious, The Most Merciful</div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero" aria-label="Profile hero section">
+        <img 
+            src="my-photo.jpg" 
+            alt="Portrait of Shoaib Akthar" 
+            class="hero-image"
+            loading="eager"
+            decoding="async"
+            fetchpriority="high"
+        >
+        <div class="hero-overlay" aria-hidden="true"></div>
+        <div class="hero-content">
+            <h1 class="hero-name">Shoaib Akthar</h1>
+            <div class="hero-divider" aria-hidden="true"></div>
+            <p class="hero-tagline">Guided by Faith • Grounded in Values</p>
+        </div>
+    </section>
+
+    <!-- Main Content -->
+    <main class="container" id="main-content">
+        <!-- About Section -->
+        <section class="section" aria-labelledby="about-title">
+            <div class="section-header">
+                <h2 class="section-title" id="about-title">About Me</h2>
+                <p class="section-subtitle">My Story</p>
+            </div>
+            <div class="about-content"> 
+                <p>Alhamdulillah, those close to me would describe me as calm, humble, and thoughtful, someone who listens more than he speaks and believes that good manners (adab) say more about a person than words ever could. I try to live each day with intention, staying grounded in faith and learning to become a better version of myself, spiritually and emotionally.</p> 
+                <div class="about-highlight"> <p>Family means everything to me. I believe peace and barakah come from serving and respecting our parents, being there for loved ones, and maintaining strong family bonds. Whether it’s helping with something small or simply spending time together, I try to show love through presence and consistency. I enjoy simple things, laughter at home, meaningful conversations, or quiet reflection after prayer, they remind me of what truly matters in life.</p> </div> <p>I’m also career-focused and always looking for ways to grow and provide for the people I care about. Alhamdulillah, I’m grateful for every opportunity to learn, improve, and contribute meaningfully in my field. I’m not perfect, but I push myself to stay consistent — to be someone my family can rely on, InshaAllah.</p> <p><strong>InshaAllah</strong>, I’m hoping to meet someone kind-hearted, sincere, and grounded in her deen — someone who values family, honesty, and personal growth. A partner who wants to grow together — to build a peaceful home based on love, faith, and mutual respect. Not looking for perfection, but for a person who shares the same purpose: to walk side by side, learning and growing together for the sake of Allah ﷻ.</p> 
+            </div>
+        </section>
+
+        <!-- Photo Gallery -->
+        <section class="section" aria-labelledby="photos-title">
+            <div class="section-header">
+                <h2 class="section-title" id="photos-title">Photos</h2>
+                <p class="section-subtitle">A Glimpse Into My Life</p>
+            </div>
+            <div class="photo-gallery">
+                <div class="photo-item" tabindex="0" role="img" aria-label="Photo of Shoaib Akthar">
+                    <img 
+                        src="my-photo.jpg" 
+                        alt="Shoaib Akthar portrait 1"
+                        loading="lazy"
+                        decoding="async"
+                    >
+                </div>
+                <div class="photo-item" tabindex="0" role="img" aria-label="Photo of Shoaib Akthar">
+                    <img 
+                        src="photo2.jpg" 
+                        alt="Shoaib Akthar portrait 2"
+                        loading="lazy"
+                        decoding="async"
+                    >
+                </div>
+                <div class="photo-item" tabindex="0" role="img" aria-label="Photo of Shoaib Akthar">
+                    <img 
+                        src="photo3.jpg" 
+                        alt="Shoaib Akthar portrait 3"
+                        loading="lazy"
+                        decoding="async"
+                    >
+                </div>
+                <div class="photo-item" tabindex="0" role="img" aria-label="Photo of Shoaib Akthar">
+                    <img 
+                        src="photo4.jpg" 
+                        alt="Shoaib Akthar portrait 4"
+                        loading="lazy"
+                        decoding="async"
+                    >
+                </div>
+                <div class="photo-item" tabindex="0" role="img" aria-label="Photo of Shoaib Akthar">
+                    <img 
+                        src="photo5.jpg" 
+                        alt="Shoaib Akthar portrait 5"
+                        loading="lazy"
+                        decoding="async"
+                    >
+                </div>
+            </div>
+        </section>
+
+        <!-- Faith & Values -->
+        <section class="section" aria-labelledby="faith-title">
+            <div class="section-header">
+                <h2 class="section-title" id="faith-title">Faith & Values</h2>
+                <p class="section-subtitle">What Guides Me</p>
+            </div>
+            <div class="faith-box">
+                <p class="faith-text">Prayer, reflection, and gratitude are central to my daily life. I strive to embody strong character and follow the teachings that bring peace and purpose. Faith isn't just belief — it's a way of living with integrity, compassion, and constant self-improvement.</p>
+            </div>
+        </section>
+
+        <!-- Personal Details -->
+        <section class="section" aria-labelledby="personal-title">
+            <div class="section-header">
+                <h2 class="section-title" id="personal-title">Personal Details</h2>
+                <p class="section-subtitle">Essential Information</p>
+            </div>
+            <div class="info-grid">
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Date of Birth</div>
+                    <div class="info-value">July 17, 1999</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Age</div>
+                    <div class="info-value">26 Years</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Place of Birth</div>
+                    <div class="info-value">Chennai, India</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Currently Residing</div>
+                    <div class="info-value">Minnesota, USA</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Height</div>
+                    <div class="info-value">5'7"</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Religion</div>
+                    <div class="info-value">Islam</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Education</div>
+                    <div class="info-value">B.Tech - Computer Science & Engineering<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">SRM Institute of Science and Technology (2021)</span></div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Masters (Dual Degree)</div>
+                    <div class="info-value">M.S. Cyber Security - Adelphi University, NY (2023)<br>M.S. Security Technologies - University of Minnesota</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Professional Details -->
+        <section class="section" aria-labelledby="professional-title">
+            <div class="section-header">
+                <h2 class="section-title" id="professional-title">Professional Experience</h2>
+                <p class="section-subtitle">Career & Expertise</p>
+            </div>
+            <div class="info-grid">
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Current Position</div>
+                    <div class="info-value">Cybersecurity Engineer</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Specialization</div>
+                    <div class="info-value">Identity & Access Management</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Company</div>
+                    <div class="info-value">ObserveID, Inc.</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Client</div>
+                    <div class="info-value">Warner Bros. Discovery</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Family Background -->
+        <section class="section" aria-labelledby="family-title">
+            <div class="section-header">
+                <h2 class="section-title" id="family-title">Family Background</h2>
+                <p class="section-subtitle">About My Family</p>
+            </div>
+            <div class="two-column">
+                <div class="family-card" tabindex="0">
+                    <div class="family-member">
+                        <div class="family-label">Father's Name</div>
+                        <div class="family-value">K. Shajahan</div>
+                    </div>
+                    <div class="family-member">
+                        <div class="family-label">Father's Occupation</div>
+                        <div class="family-value">Electronic Engineer - Business</div>
+                    </div>
+                    <div class="family-member">
+                        <div class="family-label">Mother's Name</div>
+                        <div class="family-value">S. Parvin Sulthana</div>
+                    </div>
+                </div>
+                <div class="family-card" tabindex="0">
+                    <div class="family-member">
+                        <div class="family-label">Siblings</div>
+                        <div class="family-value">One Sister</div>
+                    </div>
+                    <div class="family-member">
+                        <div class="family-label">Sister's Name</div>
+                        <div class="family-value">S. Afreen</div>
+                    </div>
+                    <div class="family-member">
+                        <div class="family-label">Sister's Education</div>
+                        <div class="family-value">Currently Studying M.B.B.S</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Contact Section -->
+        <section class="section" aria-labelledby="contact-title">
+            <div class="contact-card" tabindex="0">
+                <h2 class="contact-title" id="contact-title">Get In Touch</h2>
+                <p class="contact-subtitle">For Further Discussion</p>
+                <div class="contact-info">
+                    <strong>Phone (India):</strong> <a href="tel:+919841152099" rel="noopener">+91 98411 52099</a>
+                </div>
+                <div class="contact-info">
+                    <strong>Phone (USA):</strong> <a href="tel:+19293728347" rel="noopener">+1 (929) 372-8347</a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Optimized JavaScript -->
+    <script>
+        'use strict';
+        
+        // Remove loading state when page is fully loaded
+        window.addEventListener('load', () => {
+            document.body.classList.remove('loading');
+            document.body.classList.add('loaded');
+        });
+
+        // Smooth scroll behavior with fallback
+        if (!('scrollBehavior' in document.documentElement.style)) {
+            document.documentElement.style.scrollBehavior = 'smooth';
+        }
+
+        // Optimized parallax effect with requestAnimationFrame
+        let ticking = false;
+        const heroImage = document.querySelector('.hero-image');
+        
+        function updateParallax() {
+            const scrolled = window.pageYOffset;
+            if (heroImage && scrolled < window.innerHeight) {
+                const translateY = scrolled * 0.5;
+                const scale = 1 + (scrolled * 0.0002);
+                heroImage.style.transform = `translate3d(0, ${translateY}px, 0) scale(${scale})`;
+            }
+            ticking = false;
+        }
+
+        window.addEventListener('scroll', () => {
+            if (!ticking) {
+                window.requestAnimationFrame(updateParallax);
+                ticking = true;
+            }
+        }, { passive: true });
+
+        // Intersection Observer for scroll animations with better performance
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -50px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
+                    // Unobserve after animation to improve performance
+                    observer.unobserve(entry.target);
+                }
+            });
+        }, observerOptions);
+
+        // Observe all sections
+        document.querySelectorAll('.section').forEach(section => {
+            observer.observe(section);
+        });
+
+        // Lazy load images with native loading attribute fallback
+        if ('loading' in HTMLImageElement.prototype) {
+            // Native lazy loading is supported
+            const images = document.querySelectorAll('img[loading="lazy"]');
+            images.forEach(img => {
+                if (img.dataset.src) {
+                    img.src = img.dataset.src;
+                }
+            });
+        } else {
+            // Fallback for older browsers
+            const imageObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const img = entry.target;
+                        if (img.dataset.src) {
+                            img.src = img.dataset.src;
+                        }
+                        imageObserver.unobserve(img);
+                    }
+                });
+            });
+
+            document.querySelectorAll('img[loading="lazy"]').forEach(img => {
+                imageObserver.observe(img);
+            });
+        }
+
+        // Enhanced keyboard navigation for cards
+        document.querySelectorAll('.info-card, .family-card, .photo-item').forEach(card => {
+            card.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    card.click();
+                }
+            });
+        });
+
+        // Prevent right-click on images (optional security measure)
+        document.querySelectorAll('.photo-item img, .hero-image').forEach(img => {
+            img.addEventListener('contextmenu', (e) => {
+                // Uncomment the line below to prevent right-click
+                // e.preventDefault();
+            });
+        });
+
+        // Performance monitoring (optional, for development)
+        if ('PerformanceObserver' in window) {
+            try {
+                const perfObserver = new PerformanceObserver((list) => {
+                    for (const entry of list.getEntries()) {
+                        if (entry.entryType === 'largest-contentful-paint') {
+                            console.log('LCP:', entry.renderTime || entry.loadTime);
+                        }
+                    }
+                });
+                perfObserver.observe({ entryTypes: ['largest-contentful-paint'] });
+            } catch (e) {
+                // Silently fail if observer not supported
+            }
+        }
+
+        // Service Worker Registration (for PWA capabilities - optional)
+        // if ('serviceWorker' in navigator) {
+        //     window.addEventListener('load', () => {
+        //         navigator.serviceWorker.register('/sw.js').catch(() => {});
+        //     });
+        // }
+    </script>
+</body>
+</html>
