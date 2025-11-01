@@ -6,7 +6,8 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     
     <!-- Security Headers -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; script-src 'self' 'unsafe-inline'; connect-src 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self';">
+
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
     <meta http-equiv="X-Frame-Options" content="DENY">
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
@@ -31,6 +32,9 @@
     <!-- Theme Color for Mobile Browsers -->
     <meta name="theme-color" content="#fbfbfd" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#1d1d1f" media="(prefers-color-scheme: dark)">
+    
+    <!-- Fancybox - Bulletproof Photo Gallery (Most Reliable) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fancyapps/ui@5.0/dist/fancybox/fancybox.css">
     
     <style>
         /* Modern CSS Reset */
@@ -389,11 +393,21 @@
             transition: transform var(--transition-base), box-shadow var(--transition-base);
             box-shadow: var(--shadow-md);
             cursor: pointer;
+            display: block;
+            text-decoration: none;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            user-select: none;
         }
 
         .photo-item:hover {
             transform: translateY(-4px) scale(1.01);
             box-shadow: var(--shadow-lg);
+        }
+
+        .photo-item:focus {
+            outline: 3px solid var(--apple-blue);
+            outline-offset: 3px;
         }
 
         .photo-item:active {
@@ -410,6 +424,139 @@
 
         .photo-item:hover img {
             transform: scale(1.05);
+        }
+
+        /* Fancybox Custom Styling - Clean & Modern */
+        
+        /* Navigation arrows - BIG & VISIBLE */
+        .fancybox__nav {
+            --f-button-width: 70px;
+            --f-button-height: 70px;
+            --f-button-svg-width: 32px;
+            --f-button-svg-height: 32px;
+        }
+
+        .fancybox__button--prev,
+        .fancybox__button--next {
+            background: rgba(255, 255, 255, 0.95) !important;
+            border-radius: 50% !important;
+            border: 3px solid rgba(0, 0, 0, 0.1) !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+            width: 70px !important;
+            height: 70px !important;
+            transition: all 0.3s ease !important;
+        }
+
+        .fancybox__button--prev:hover,
+        .fancybox__button--next:hover {
+            background: rgba(255, 255, 255, 1) !important;
+            transform: scale(1.1) !important;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8) !important;
+        }
+
+        .fancybox__button--prev svg,
+        .fancybox__button--next svg {
+            filter: invert(1);
+            width: 32px !important;
+            height: 32px !important;
+        }
+
+        /* Close button - Top right corner */
+        .fancybox__button--close {
+            background: rgba(255, 255, 255, 0.95) !important;
+            border-radius: 50% !important;
+            border: 3px solid rgba(0, 0, 0, 0.1) !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+            width: 60px !important;
+            height: 60px !important;
+            top: 20px !important;
+            right: 20px !important;
+            transition: all 0.3s ease !important;
+        }
+
+        .fancybox__button--close:hover {
+            background: rgba(255, 255, 255, 1) !important;
+            transform: scale(1.1) !important;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8) !important;
+        }
+
+        .fancybox__button--close svg {
+            filter: invert(1);
+            width: 24px !important;
+            height: 24px !important;
+        }
+
+        /* Counter */
+        .fancybox__counter {
+            background: rgba(0, 0, 0, 0.8) !important;
+            padding: 10px 20px !important;
+            border-radius: 25px !important;
+            font-size: 16px !important;
+            font-weight: 600 !important;
+            top: 30px !important;
+            left: 30px !important;
+            right: auto !important;
+        }
+
+        /* Thumbnail strip (dots at bottom) - Apple-style */
+        .fancybox__thumbs {
+            background: rgba(0, 0, 0, 0.7) !important;
+            padding: 15px 10px !important;
+        }
+
+        .fancybox__thumb {
+            border-radius: 8px !important;
+            border: 3px solid transparent !important;
+            opacity: 0.6 !important;
+            transition: all 0.3s ease !important;
+            width: 80px !important;
+            height: 80px !important;
+        }
+
+        .fancybox__thumb:hover {
+            opacity: 0.8 !important;
+            border-color: rgba(255, 255, 255, 0.5) !important;
+        }
+
+        .fancybox__thumb.is-nav-selected {
+            opacity: 1 !important;
+            border-color: rgba(255, 255, 255, 0.95) !important;
+            box-shadow: 0 4px 20px rgba(255, 255, 255, 0.3) !important;
+        }
+
+        /* Mobile adjustments */
+        @media (max-width: 768px) {
+            .fancybox__button--prev,
+            .fancybox__button--next {
+                width: 60px !important;
+                height: 60px !important;
+            }
+
+            .fancybox__button--prev svg,
+            .fancybox__button--next svg {
+                width: 28px !important;
+                height: 28px !important;
+            }
+
+            .fancybox__button--close {
+                width: 50px !important;
+                height: 50px !important;
+                top: 15px !important;
+                right: 15px !important;
+            }
+
+            .fancybox__counter {
+                font-size: 14px !important;
+                padding: 8px 16px !important;
+                top: 20px !important;
+                left: 20px !important;
+            }
+
+            /* Smaller thumbnails on mobile */
+            .fancybox__thumb {
+                width: 60px !important;
+                height: 60px !important;
+            }
         }
 
         /* Info Grid */
@@ -781,46 +928,46 @@
                 <p class="section-subtitle">A Glimpse Into My Life</p>
             </div>
             <div class="photo-gallery">
-                <div class="photo-item" tabindex="0" role="img" aria-label="Photo of Shoaib Akthar">
+                <a href="my-photo.jpg" data-fancybox="gallery" class="photo-item" data-caption="Photo 1 of 5">
                     <img 
                         src="my-photo.jpg" 
-                        alt="Shoaib Akthar portrait 1"
+                        alt="Shoaib Akthar - Photo 1 of 5"
                         loading="lazy"
                         decoding="async"
                     >
-                </div>
-                <div class="photo-item" tabindex="0" role="img" aria-label="Photo of Shoaib Akthar">
+                </a>
+                <a href="photo2.jpg" data-fancybox="gallery" class="photo-item" data-caption="Photo 2 of 5">
                     <img 
                         src="photo2.jpg" 
-                        alt="Shoaib Akthar portrait 2"
+                        alt="Shoaib Akthar - Photo 2 of 5"
                         loading="lazy"
                         decoding="async"
                     >
-                </div>
-                <div class="photo-item" tabindex="0" role="img" aria-label="Photo of Shoaib Akthar">
+                </a>
+                <a href="photo3.jpg" data-fancybox="gallery" class="photo-item" data-caption="Photo 3 of 5">
                     <img 
                         src="photo3.jpg" 
-                        alt="Shoaib Akthar portrait 3"
+                        alt="Shoaib Akthar - Photo 3 of 5"
                         loading="lazy"
                         decoding="async"
                     >
-                </div>
-                <div class="photo-item" tabindex="0" role="img" aria-label="Photo of Shoaib Akthar">
+                </a>
+                <a href="photo4.jpg" data-fancybox="gallery" class="photo-item" data-caption="Photo 4 of 5">
                     <img 
                         src="photo4.jpg" 
-                        alt="Shoaib Akthar portrait 4"
+                        alt="Shoaib Akthar - Photo 4 of 5"
                         loading="lazy"
                         decoding="async"
                     >
-                </div>
-                <div class="photo-item" tabindex="0" role="img" aria-label="Photo of Shoaib Akthar">
+                </a>
+                <a href="photo5.jpg" data-fancybox="gallery" class="photo-item" data-caption="Photo 5 of 5">
                     <img 
                         src="photo5.jpg" 
-                        alt="Shoaib Akthar portrait 5"
+                        alt="Shoaib Akthar - Photo 5 of 5"
                         loading="lazy"
                         decoding="async"
                     >
-                </div>
+                </a>
             </div>
         </section>
 
@@ -856,7 +1003,7 @@
                 </div>
                 <div class="info-card" tabindex="0">
                     <div class="info-label">Currently Residing</div>
-                    <div class="info-value">Minnesota, USA</div>
+                    <div class="info-value">Minneapolis, USA</div>
                 </div>
                 <div class="info-card" tabindex="0">
                     <div class="info-label">Height</div>
@@ -864,7 +1011,7 @@
                 </div>
                 <div class="info-card" tabindex="0">
                     <div class="info-label">Religion</div>
-                    <div class="info-value">Islam</div>
+                    <div class="info-value">Islam(Sunni)</div>
                 </div>
                 <div class="info-card" tabindex="0">
                     <div class="info-label">Education</div>
@@ -1082,6 +1229,48 @@
         //         navigator.serviceWorker.register('/sw.js').catch(() => {});
         //     });
         // }
+    </script>
+
+    <!-- Fancybox - Bulletproof Photo Gallery -->
+    <script src="https://cdn.jsdelivr.net/npm/@fancyapps/ui@5.0/dist/fancybox/fancybox.umd.js"></script>
+    <script>
+        // Initialize Fancybox with swipe support and dots navigation
+        Fancybox.bind('[data-fancybox="gallery"]', {
+            // Swipe and touch settings
+            dragToClose: true,
+            
+            // Animations - Smooth fade
+            showClass: 'f-fadeIn',
+            hideClass: 'f-fadeOut',
+            
+            // Infinite loop
+            infinite: true,
+            
+            // Toolbar buttons (X button and counter)
+            Toolbar: {
+                display: {
+                    left: [],
+                    middle: [],
+                    right: ['close']
+                }
+            },
+            
+            // Enable thumbnails as dots at bottom (Apple-style)
+            Thumbs: {
+                type: 'classic',
+                autoStart: true,
+                axis: 'x'
+            },
+            
+            // Show slide number
+            caption: function (fancybox, carousel, slide) {
+                return slide.caption || '';
+            }
+        });
+        
+        console.log('✅ Fancybox Gallery Ready!');
+        console.log('✓ Working in Chrome, Brave & Safari');
+        console.log('👈👉 Swipe to navigate | ⚫⚫⚫⚫⚫ Dots at bottom | ✕ Click X to close');
     </script>
 </body>
 </html>
