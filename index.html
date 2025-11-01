@@ -5,15 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     
-    <!-- Security Headers -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self';">
-
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
     <meta http-equiv="X-Frame-Options" content="DENY">
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
     <meta http-equiv="Permissions-Policy" content="geolocation=(), microphone=(), camera=()">
-    
-    <!-- SEO & Social Media -->
     <meta name="description" content="Shoaib Akhtar Guided by faith, grounded in values.">
     <meta name="keywords" content="Shoaib Akhtar, Cybersecurity Engineer, IAM, Identity Access Management">
     <meta name="author" content="Shoaib Akhtar">
@@ -21,32 +17,25 @@
     
     <title>Shoaib Akhtar | Profile</title>
     
-    <!-- Performance: Preconnect to external domains -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%230066cc'/%3E%3Ccircle cx='50' cy='38' r='16' fill='white'/%3E%3Cpath d='M 20 85 Q 20 62 50 62 Q 80 62 80 85 L 80 100 L 20 100 Z' fill='white'/%3E%3C/svg%3E">
     <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    
-    <!-- Fonts with display swap for better performance -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&family=Amiri:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
     <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&family=Amiri:wght@400;700&display=swap" rel="stylesheet"></noscript>
-    
-    <!-- Theme Color for Mobile Browsers -->
     <meta name="theme-color" content="#fbfbfd" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#1d1d1f" media="(prefers-color-scheme: dark)">
-    
-    <!-- Fancybox - Bulletproof Photo Gallery (Most Reliable) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fancyapps/ui@5.0/dist/fancybox/fancybox.css">
     
     <style>
-        /* Modern CSS Reset */
         *, *::before, *::after {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
-        /* CSS Custom Properties with Dark Mode Support */
+        
         :root {
-            /* Light Mode Colors */
+            
             --apple-white: #fbfbfd;
             --apple-light-gray: #f5f5f7;
             --apple-gray: #d2d2d7;
@@ -57,7 +46,7 @@
             --apple-blue: #0071e3;
             --apple-blue-hover: #0077ed;
             
-            /* Spacing Scale */
+            
             --space-xs: 0.5rem;
             --space-sm: 1rem;
             --space-md: 1.5rem;
@@ -65,7 +54,7 @@
             --space-xl: 3rem;
             --space-2xl: 4rem;
             
-            /* Typography Scale */
+            
             --text-xs: 0.75rem;
             --text-sm: 0.875rem;
             --text-base: 1rem;
@@ -77,25 +66,25 @@
             --text-5xl: 4rem;
             --text-6xl: 6rem;
             
-            /* Border Radius */
+            
             --radius-sm: 8px;
             --radius-md: 12px;
             --radius-lg: 18px;
             --radius-xl: 24px;
             
-            /* Shadows */
+            
             --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
             --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
             --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.16);
             
-            /* Transitions */
+            
             --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
             --transition-base: 300ms cubic-bezier(0.4, 0, 0.2, 1);
             --transition-slow: 500ms cubic-bezier(0.4, 0, 0.2, 1);
         }
 
-        /* Dark Mode Support */
+        
         @media (prefers-color-scheme: dark) {
             :root {
                 --apple-white: #1d1d1f;
@@ -110,7 +99,7 @@
             }
         }
 
-        /* Base Styles */
+        
         html {
             scroll-behavior: smooth;
             -webkit-font-smoothing: antialiased;
@@ -128,14 +117,14 @@
             position: relative;
         }
 
-        /* Accessibility: Focus Styles */
+        
         *:focus-visible {
             outline: 2px solid var(--apple-blue);
             outline-offset: 2px;
             border-radius: var(--radius-sm);
         }
 
-        /* Skip to main content for screen readers */
+        
         .skip-to-content {
             position: absolute;
             top: -40px;
@@ -153,7 +142,7 @@
             left: var(--space-sm);
         }
 
-        /* Bismillah Section */
+        
         .bismillah-section {
             text-align: center;
             padding: clamp(2rem, 5vw, 3.125rem) var(--space-lg) clamp(1.5rem, 3vw, 1.875rem);
@@ -167,7 +156,6 @@
             font-size: clamp(1.5rem, 4vw, 2rem);
             color: var(--apple-text);
             margin-bottom: var(--space-sm);
-            animation: fadeInDown 1s ease-out;
             font-weight: 400;
         }
 
@@ -176,10 +164,9 @@
             color: var(--apple-dark-gray);
             letter-spacing: 0.15em;
             text-transform: uppercase;
-            animation: fadeInDown 1s ease-out 0.2s both;
         }
 
-        /* Hero Section */
+        
         .hero {
             position: relative;
             height: clamp(500px, 70vh, 800px);
@@ -198,11 +185,19 @@
             object-position: center 35%;
             opacity: 0.95;
             filter: brightness(1.15) contrast(1.05) saturate(1.1);
-            will-change: transform;
             transform: translateZ(0);
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+        }
+        
+        
+        @media (min-width: 769px) {
+            .hero-image {
+                will-change: transform;
+            }
         }
 
-        /* Gradient Overlay */
+        
         .hero-overlay {
             position: absolute;
             bottom: 0;
@@ -244,7 +239,6 @@
             color: var(--apple-black);
             margin-bottom: var(--space-md);
             letter-spacing: -0.03em;
-            animation: fadeInUp 1s ease-out 0.3s both;
             line-height: 1.1;
         }
 
@@ -253,7 +247,6 @@
             height: 1px;
             background: var(--apple-gray);
             margin: 0 auto var(--space-lg);
-            animation: fadeInUp 1s ease-out 0.4s both;
         }
 
         .hero-tagline {
@@ -261,10 +254,9 @@
             color: var(--apple-dark-gray);
             font-weight: 400;
             letter-spacing: 0.03em;
-            animation: fadeInUp 1s ease-out 0.5s both;
         }
 
-        /* Main Content */
+        
         main.container {
             max-width: min(1200px, 90vw);
             margin: 0 auto;
@@ -272,12 +264,10 @@
             background: var(--apple-white);
         }
 
-        /* Section Styling */
         .section {
             margin-bottom: clamp(4rem, 10vw, 7.5rem);
-            opacity: 0;
-            transform: translateY(40px);
-            animation: fadeInUp 0.8s ease-out forwards;
+            opacity: 1;
+            transform: translateY(0);
         }
 
         .section-header {
@@ -313,7 +303,7 @@
             font-weight: 400;
         }
 
-        /* About Section */
+        
         .about-content {
             background: var(--apple-light-gray);
             padding: clamp(2.5rem, 5vw, 3.75rem);
@@ -353,7 +343,7 @@
             font-weight: 600;
         }
 
-        /* Faith Section */
+        
         .faith-box {
             background: var(--apple-light-gray);
             padding: clamp(2.5rem, 5vw, 3.125rem);
@@ -376,12 +366,18 @@
             font-weight: 400;
         }
 
-        /* Photo Gallery - Modern Grid */
+        
         .photo-gallery {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
             gap: var(--space-lg);
             margin-top: clamp(2.5rem, 5vw, 3.75rem);
+        }
+        
+        .photo-gallery .photo-item {
+            flex: 1 1 280px;
+            max-width: 400px;
         }
 
         .photo-item {
@@ -426,9 +422,9 @@
             transform: scale(1.05);
         }
 
-        /* Fancybox Custom Styling - Clean & Modern */
         
-        /* Navigation arrows - BIG & VISIBLE */
+        
+        
         .fancybox__nav {
             --f-button-width: 70px;
             --f-button-height: 70px;
@@ -461,7 +457,7 @@
             height: 32px !important;
         }
 
-        /* Close button - Top right corner */
+        
         .fancybox__button--close {
             background: rgba(255, 255, 255, 0.95) !important;
             border-radius: 50% !important;
@@ -486,7 +482,7 @@
             height: 24px !important;
         }
 
-        /* Counter */
+        
         .fancybox__counter {
             background: rgba(0, 0, 0, 0.8) !important;
             padding: 10px 20px !important;
@@ -498,7 +494,7 @@
             right: auto !important;
         }
 
-        /* Thumbnail strip (dots at bottom) - Apple-style */
+        
         .fancybox__thumbs {
             background: rgba(0, 0, 0, 0.7) !important;
             padding: 15px 10px !important;
@@ -524,7 +520,7 @@
             box-shadow: 0 4px 20px rgba(255, 255, 255, 0.3) !important;
         }
 
-        /* Mobile adjustments */
+        
         @media (max-width: 768px) {
             .fancybox__button--prev,
             .fancybox__button--next {
@@ -552,19 +548,25 @@
                 left: 20px !important;
             }
 
-            /* Smaller thumbnails on mobile */
+            
             .fancybox__thumb {
                 width: 60px !important;
                 height: 60px !important;
             }
         }
 
-        /* Info Grid */
+        
         .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
             gap: var(--space-lg);
             margin-top: clamp(2.5rem, 5vw, 3.75rem);
+        }
+        
+        .info-grid .info-card {
+            flex: 1 1 280px;
+            max-width: 400px;
         }
 
         .info-card {
@@ -616,12 +618,18 @@
             line-height: 1.5;
         }
 
-        /* Family Section */
+        
         .two-column {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
             gap: var(--space-lg);
             margin-top: clamp(2.5rem, 5vw, 3.75rem);
+        }
+        
+        .two-column .family-card {
+            flex: 1 1 300px;
+            max-width: 550px;
         }
 
         .family-card {
@@ -663,7 +671,7 @@
             font-weight: 500;
         }
 
-        /* Contact Section */
+        
         .contact-card {
             background: var(--apple-light-gray);
             color: var(--apple-text);
@@ -737,7 +745,7 @@
             transform: scale(0.98);
         }
 
-        /* Touch Target Optimization for Mobile */
+        
         @media (hover: none) and (pointer: coarse) {
             .contact-info a,
             .info-card,
@@ -748,38 +756,9 @@
             }
         }
 
-        /* Animations */
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(40px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
 
-        @keyframes fadeInDown {
-            from {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
 
-        /* Staggered Animation Delays */
-        .section:nth-child(1) { animation-delay: 0.1s; }
-        .section:nth-child(2) { animation-delay: 0.2s; }
-        .section:nth-child(3) { animation-delay: 0.3s; }
-        .section:nth-child(4) { animation-delay: 0.4s; }
-        .section:nth-child(5) { animation-delay: 0.5s; }
-        .section:nth-child(6) { animation-delay: 0.6s; }
-
-        /* Reduce Motion for Accessibility */
+        
         @media (prefers-reduced-motion: reduce) {
             *,
             *::before,
@@ -791,7 +770,7 @@
             }
         }
 
-        /* Print Styles */
+        
         @media print {
             body {
                 background: white;
@@ -835,19 +814,8 @@
             }
         }
 
-        /* Loading State */
-        .loading {
-            opacity: 0;
-            pointer-events: none;
-        }
 
-        .loaded {
-            opacity: 1;
-            pointer-events: auto;
-            transition: opacity var(--transition-slow);
-        }
-
-        /* Smooth Scrollbar */
+        
         ::-webkit-scrollbar {
             width: 12px;
         }
@@ -866,7 +834,7 @@
             background: var(--apple-dark-gray);
         }
 
-        /* High Contrast Mode Support */
+        
         @media (prefers-contrast: high) {
             .section-title::after,
             .info-card::before {
@@ -879,17 +847,17 @@
         }
     </style>
 </head>
-<body class="loading">
-    <!-- Skip to main content for accessibility -->
+<body>
+    
    <!-- <a href="#main-content" class="skip-to-content">Skip to main content</a> -->
 
-    <!-- Bismillah Section -->
+    
     <header class="bismillah-section" role="banner">
         <div class="bismillah-text" aria-label="Bismillah in Arabic">بِسْمِ اللهِ الرَّحْمٰنِ الرَّحِيْمِ</div>
         <div class="bismillah-translation">In the Name of Allah, The Most Gracious, The Most Merciful</div>
     </header>
 
-    <!-- Hero Section -->
+    
     <section class="hero" aria-label="Profile hero section">
         <img 
             src="my-photo.jpg" 
@@ -907,21 +875,76 @@
         </div>
     </section>
 
-    <!-- Main Content -->
     <main class="container" id="main-content">
-        <!-- About Section -->
-        <section class="section" aria-labelledby="about-title">
+        
+        <section class="section" aria-labelledby="personal-title">
             <div class="section-header">
-                <h2 class="section-title" id="about-title">About Me</h2>
-                <p class="section-subtitle">My Story</p>
+                <h2 class="section-title" id="personal-title">Personal Details</h2>
+                <p class="section-subtitle">Essential Information</p>
             </div>
-            <div class="about-content"> 
-                <p>Alhamdulillah, those close to me would describe me as calm, humble, and thoughtful, someone who listens more than he speaks and believes that good manners (adab) say more about a person than words ever could. I try to live each day with intention, staying grounded in faith and learning to become a better version of myself, spiritually and emotionally.</p> 
-                <div class="about-highlight"> <p>Family means everything to me. I believe peace and barakah come from serving and respecting our parents, being there for loved ones, and maintaining strong family bonds. Whether it’s helping with something small or simply spending time together, I try to show love through presence and consistency. I enjoy simple things, laughter at home, meaningful conversations, or quiet reflection after prayer, they remind me of what truly matters in life.</p> </div> <p>I’m also career-focused and always looking for ways to grow and provide for the people I care about. Alhamdulillah, I’m grateful for every opportunity to learn, improve, and contribute meaningfully in my field. I’m not perfect, but I push myself to stay consistent — to be someone my family can rely on, InshaAllah.</p> <p><strong>InshaAllah</strong>, I’m hoping to meet someone kind-hearted, sincere, and grounded in her deen — someone who values family, honesty, and personal growth. A partner who wants to grow together — to build a peaceful home based on love, faith, and mutual respect. Not looking for perfection, but for a person who shares the same purpose: to walk side by side, learning and growing together for the sake of Allah ﷻ.</p> 
+            <div class="info-grid">
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Date of Birth</div>
+                    <div class="info-value">July 17, 1999</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Age</div>
+                    <div class="info-value">26 Years</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Place of Birth</div>
+                    <div class="info-value">Chennai, India</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Currently Residing</div>
+                    <div class="info-value">Minneapolis, USA</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Height</div>
+                    <div class="info-value">5'7"</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Religion</div>
+                    <div class="info-value">Islam(Sunni)</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Education</div>
+                    <div class="info-value">B.Tech - Computer Science & Engineering<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">SRM Institute of Science and Technology (2021)</span></div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Dual Master's Degrees</div>
+                    <div class="info-value">M.S. Cyber Security<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">Adelphi University, New York (2023)</span><br>M.S. Security Technologies<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">University of Minnesota (2026)</span></div>
+                </div>
             </div>
         </section>
 
-        <!-- Photo Gallery -->
+        
+        <section class="section" aria-labelledby="professional-title">
+            <div class="section-header">
+                <h2 class="section-title" id="professional-title">Professional Experience</h2>
+                <p class="section-subtitle">Career & Expertise</p>
+            </div>
+            <div class="info-grid">
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Current Position</div>
+                    <div class="info-value">Cybersecurity Engineer</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Specialization</div>
+                    <div class="info-value">Identity & Access Management</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Company</div>
+                    <div class="info-value">ObserveID, Inc.</div>
+                </div>
+                <div class="info-card" tabindex="0">
+                    <div class="info-label">Client</div>
+                    <div class="info-value">Warner Bros. Discovery</div>
+                </div>
+            </div>
+        </section>
+
+        
         <section class="section" aria-labelledby="photos-title">
             <div class="section-header">
                 <h2 class="section-title" id="photos-title">Photos</h2>
@@ -971,7 +994,19 @@
             </div>
         </section>
 
-        <!-- Faith & Values -->
+        
+        <section class="section" aria-labelledby="about-title">
+            <div class="section-header">
+                <h2 class="section-title" id="about-title">About Me</h2>
+                <p class="section-subtitle">My Story</p>
+            </div>
+            <div class="about-content"> 
+                <p>Alhamdulillah, those close to me would describe me as calm, humble, and thoughtful, someone who listens more than he speaks and believes that good manners (adab) say more about a person than words ever could. I try to live each day with intention, staying grounded in faith and learning to become a better version of myself, spiritually and emotionally.</p> 
+                <div class="about-highlight"> <p>Family means everything to me. I believe peace and barakah come from serving and respecting our parents, being there for loved ones, and maintaining strong family bonds. Whether it's helping with something small or simply spending time together, I try to show love through presence and consistency. I enjoy simple things, laughter at home, meaningful conversations, or quiet reflection after prayer, they remind me of what truly matters in life.</p> </div> <p>I'm also career-focused and always looking for ways to grow and provide for the people I care about. Alhamdulillah, I'm grateful for every opportunity to learn, improve, and contribute meaningfully in my field. I'm not perfect, but I push myself to stay consistent — to be someone my family can rely on, InshaAllah.</p> <p><strong>InshaAllah</strong>, I'm hoping to meet someone kind-hearted, sincere, and grounded in her deen — someone who values family, honesty, and personal growth. A partner who wants to grow together — to build a peaceful home based on love, faith, and mutual respect. Not looking for perfection, but for a person who shares the same purpose: to walk side by side, learning and growing together for the sake of Allah ﷻ.</p> 
+            </div>
+        </section>
+
+        
         <section class="section" aria-labelledby="faith-title">
             <div class="section-header">
                 <h2 class="section-title" id="faith-title">Faith & Values</h2>
@@ -982,75 +1017,7 @@
             </div>
         </section>
 
-        <!-- Personal Details -->
-        <section class="section" aria-labelledby="personal-title">
-            <div class="section-header">
-                <h2 class="section-title" id="personal-title">Personal Details</h2>
-                <p class="section-subtitle">Essential Information</p>
-            </div>
-            <div class="info-grid">
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Date of Birth</div>
-                    <div class="info-value">July 17, 1999</div>
-                </div>
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Age</div>
-                    <div class="info-value">26 Years</div>
-                </div>
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Place of Birth</div>
-                    <div class="info-value">Chennai, India</div>
-                </div>
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Currently Residing</div>
-                    <div class="info-value">Minneapolis, USA</div>
-                </div>
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Height</div>
-                    <div class="info-value">5'7"</div>
-                </div>
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Religion</div>
-                    <div class="info-value">Islam(Sunni)</div>
-                </div>
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Education</div>
-                    <div class="info-value">B.Tech - Computer Science & Engineering<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">SRM Institute of Science and Technology (2021)</span></div>
-                </div>
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Dual Master's Degrees</div>
-                    <div class="info-value">M.S. Cyber Security<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">Adelphi University, New York (2023)</span><br>M.S. Security Technologies<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">University of Minnesota (2026)</span></div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Professional Details -->
-        <section class="section" aria-labelledby="professional-title">
-            <div class="section-header">
-                <h2 class="section-title" id="professional-title">Professional Experience</h2>
-                <p class="section-subtitle">Career & Expertise</p>
-            </div>
-            <div class="info-grid">
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Current Position</div>
-                    <div class="info-value">Cybersecurity Engineer</div>
-                </div>
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Specialization</div>
-                    <div class="info-value">Identity & Access Management</div>
-                </div>
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Company</div>
-                    <div class="info-value">ObserveID, Inc.</div>
-                </div>
-                <div class="info-card" tabindex="0">
-                    <div class="info-label">Client</div>
-                    <div class="info-value">Warner Bros. Discovery</div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Family Background -->
+        
         <section class="section" aria-labelledby="family-title">
             <div class="section-header">
                 <h2 class="section-title" id="family-title">Family Background</h2>
@@ -1088,7 +1055,7 @@
             </div>
         </section>
 
-        <!-- Contact Section -->
+        
         <section class="section" aria-labelledby="contact-title">
             <div class="contact-card" tabindex="0">
                 <h2 class="contact-title" id="contact-title">Get In Touch</h2>
@@ -1103,67 +1070,45 @@
         </section>
     </main>
 
-    <!-- Optimized JavaScript -->
+    
     <script>
         'use strict';
         
-        // Remove loading state when page is fully loaded
-        window.addEventListener('load', () => {
-            document.body.classList.remove('loading');
-            document.body.classList.add('loaded');
-        });
 
-        // Smooth scroll behavior with fallback
+        
         if (!('scrollBehavior' in document.documentElement.style)) {
             document.documentElement.style.scrollBehavior = 'smooth';
         }
 
-        // Optimized parallax effect with requestAnimationFrame
-        let ticking = false;
-        const heroImage = document.querySelector('.hero-image');
         
-        function updateParallax() {
-            const scrolled = window.pageYOffset;
-            if (heroImage && scrolled < window.innerHeight) {
-                const translateY = scrolled * 0.5;
-                const scale = 1 + (scrolled * 0.0002);
-                heroImage.style.transform = `translate3d(0, ${translateY}px, 0) scale(${scale})`;
+        const isDesktop = window.innerWidth > 768 && !('ontouchstart' in window);
+        
+        if (isDesktop) {
+            let ticking = false;
+            const heroImage = document.querySelector('.hero-image');
+            
+            function updateParallax() {
+                const scrolled = window.pageYOffset;
+                if (heroImage && scrolled < window.innerHeight) {
+                    const translateY = scrolled * 0.5;
+                    const scale = 1 + (scrolled * 0.0002);
+                    heroImage.style.transform = `translate3d(0, ${translateY}px, 0) scale(${scale})`;
+                }
+                ticking = false;
             }
-            ticking = false;
+
+            window.addEventListener('scroll', () => {
+                if (!ticking) {
+                    window.requestAnimationFrame(updateParallax);
+                    ticking = true;
+                }
+            }, { passive: true });
         }
 
-        window.addEventListener('scroll', () => {
-            if (!ticking) {
-                window.requestAnimationFrame(updateParallax);
-                ticking = true;
-            }
-        }, { passive: true });
 
-        // Intersection Observer for scroll animations with better performance
-        const observerOptions = {
-            threshold: 0.1,
-            rootMargin: '0px 0px -50px 0px'
-        };
-
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    entry.target.style.opacity = '1';
-                    entry.target.style.transform = 'translateY(0)';
-                    // Unobserve after animation to improve performance
-                    observer.unobserve(entry.target);
-                }
-            });
-        }, observerOptions);
-
-        // Observe all sections
-        document.querySelectorAll('.section').forEach(section => {
-            observer.observe(section);
-        });
-
-        // Lazy load images with native loading attribute fallback
+        
         if ('loading' in HTMLImageElement.prototype) {
-            // Native lazy loading is supported
+            
             const images = document.querySelectorAll('img[loading="lazy"]');
             images.forEach(img => {
                 if (img.dataset.src) {
@@ -1171,7 +1116,7 @@
                 }
             });
         } else {
-            // Fallback for older browsers
+            
             const imageObserver = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
                     if (entry.isIntersecting) {
@@ -1189,7 +1134,7 @@
             });
         }
 
-        // Enhanced keyboard navigation for cards
+        
         document.querySelectorAll('.info-card, .family-card, .photo-item').forEach(card => {
             card.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -1199,54 +1144,53 @@
             });
         });
 
-        // Prevent right-click on images (optional security measure)
+        
         document.querySelectorAll('.photo-item img, .hero-image').forEach(img => {
             img.addEventListener('contextmenu', (e) => {
-                // Uncomment the line below to prevent right-click
-                // e.preventDefault();
+                
+                
             });
         });
 
-        // Performance monitoring (optional, for development)
+        
         if ('PerformanceObserver' in window) {
             try {
                 const perfObserver = new PerformanceObserver((list) => {
                     for (const entry of list.getEntries()) {
                         if (entry.entryType === 'largest-contentful-paint') {
-                            console.log('LCP:', entry.renderTime || entry.loadTime);
                         }
                     }
                 });
                 perfObserver.observe({ entryTypes: ['largest-contentful-paint'] });
             } catch (e) {
-                // Silently fail if observer not supported
+                
             }
         }
 
-        // Service Worker Registration (for PWA capabilities - optional)
-        // if ('serviceWorker' in navigator) {
-        //     window.addEventListener('load', () => {
-        //         navigator.serviceWorker.register('/sw.js').catch(() => {});
-        //     });
-        // }
+        
+        
+        
+        
+        
+        
     </script>
 
-    <!-- Fancybox - Bulletproof Photo Gallery -->
+    
     <script src="https://cdn.jsdelivr.net/npm/@fancyapps/ui@5.0/dist/fancybox/fancybox.umd.js"></script>
     <script>
-        // Initialize Fancybox with swipe support and dots navigation
+        
         Fancybox.bind('[data-fancybox="gallery"]', {
-            // Swipe and touch settings
+            
             dragToClose: true,
             
-            // Animations - Smooth fade
+            
             showClass: 'f-fadeIn',
             hideClass: 'f-fadeOut',
             
-            // Infinite loop
+            
             infinite: true,
             
-            // Toolbar buttons (X button and counter)
+            
             Toolbar: {
                 display: {
                     left: [],
@@ -1255,22 +1199,19 @@
                 }
             },
             
-            // Enable thumbnails as dots at bottom (Apple-style)
+            
             Thumbs: {
                 type: 'classic',
                 autoStart: true,
                 axis: 'x'
             },
             
-            // Show slide number
+            
             caption: function (fancybox, carousel, slide) {
                 return slide.caption || '';
             }
         });
         
-        console.log('✅ Fancybox Gallery Ready!');
-        console.log('✓ Working in Chrome, Brave & Safari');
-        console.log('👈👉 Swipe to navigate | ⚫⚫⚫⚫⚫ Dots at bottom | ✕ Click X to close');
     </script>
 </body>
 </html>
