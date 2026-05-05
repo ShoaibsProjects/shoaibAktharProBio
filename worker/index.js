@@ -3,7 +3,7 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    if (path === '/log-visit' && request.method === 'POST') {
+    if (path === '/log-visit') {
       return handleLogVisit(request, env);
     }
 
