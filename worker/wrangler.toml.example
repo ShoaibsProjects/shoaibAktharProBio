@@ -1,0 +1,11 @@
+name = "pageview-logger"
+main = "index.js"
+compatibility_date = "2026-05-05"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pageviews-db"
+database_id = "YOUR_DATABASE_ID"
+
+[vars]
+PAGE_URL = "https://shoaibakthar.pro"

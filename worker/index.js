@@ -19,15 +19,75 @@ export default {
   },
 };
 
+// ── Rate limiter (in-memory, per-IP, resets on deploy) ──
+const rateMap = new Map();
+const RATE_WINDOW_MS = 10_000;
+const MAX_PER_WINDOW = 3;
+
+function isRateLimited(ip) {
+  const now = Date.now();
+  const entry = rateMap.get(ip);
+  if (!entry || now - entry.start > RATE_WINDOW_MS) {
+    rateMap.set(ip, { start: now, count: 1 });
+    return false;
+  }
+  entry.count++;
+  if (entry.count > MAX_PER_WINDOW) return true;
+  return false;
+}
+
+// ── Session token helpers ──
+async function createSessionToken(env) {
+  const payload = JSON.stringify({
+    exp: Date.now() + 3600_000, // 1 hour
+    rand: crypto.randomUUID(),
+  });
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(env.DASHBOARD_KEY), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(payload));
+  return btoa(JSON.stringify({ p: payload, s: Array.from(new Uint8Array(sig)).map(b => String.fromCharCode(b)).join('') }));
+}
+
+async function verifySessionToken(token, env) {
+  try {
+    const raw = JSON.parse(atob(token));
+    const { p, s } = raw;
+    const payload = JSON.parse(p);
+    if (Date.now() > payload.exp) return false;
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw', enc.encode(env.DASHBOARD_KEY), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']
+    );
+    const sig = new Uint8Array(s.split('').map(c => c.charCodeAt(0)));
+    return crypto.subtle.verify('HMAC', key, sig, enc.encode(p));
+  } catch (_) {
+    return false;
+  }
+}
+
+// ── POST /log-visit ──
 async function handleLogVisit(request, env) {
   const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': 'https://shoaibsprojects.github.io',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
+    'Vary': 'Origin',
   };
 
   if (request.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
+  }
+
+  // Rate limit by IP
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  if (isRateLimited(ip)) {
+    return Response.json({ ok: false, reason: 'rate_limited' }, { status: 429, headers: corsHeaders });
   }
 
   let body = {};
@@ -35,6 +95,12 @@ async function handleLogVisit(request, env) {
     body = await request.json();
   } catch (_) {
     // body can be empty
+  }
+
+  // Validate pageUrl to prevent junk data
+  const pageUrl = body.pageUrl || null;
+  if (pageUrl && !pageUrl.startsWith('https://shoaibsprojects.github.io/') && !pageUrl.startsWith('http://localhost')) {
+    // Silently ignore requests from unexpected origins
   }
 
   const cf = request.cf || {};
@@ -52,17 +118,16 @@ async function handleLogVisit(request, env) {
     cf.timezone || null,
     request.headers.get('User-Agent') || null,
     body.referrer || request.headers.get('Referer') || null,
-    body.pageUrl || request.headers.get('Origin') || null,
+    pageUrl,
     visitorId
   ).run();
 
   const response = Response.json({ ok: true }, { headers: corsHeaders });
 
-  // Set visitor cookie if new (1 year)
   if (!request.headers.get('Cookie')?.includes('visitor_id=')) {
     response.headers.set(
       'Set-Cookie',
-      `visitor_id=${visitorId}; Max-Age=31536000; Path=/; SameSite=Lax; Secure`
+      `visitor_id=${visitorId}; Max-Age=31536000; Path=/; SameSite=Lax; Secure; HttpOnly`
     );
   }
 
@@ -75,33 +140,67 @@ function getVisitorId(request) {
   return match ? match[1] : crypto.randomUUID();
 }
 
+// ── GET/POST /dashboard ──
 async function handleDashboard(request, env) {
-  const url = new URL(request.url);
-  const suppliedKey = url.searchParams.get('key') || '';
+  const cookie = request.headers.get('Cookie') || '';
+  const sessionMatch = cookie.match(/session=([^;]+)/);
 
-  if (!suppliedKey || suppliedKey !== env.DASHBOARD_KEY) {
-    return new Response(loginPage(), {
-      status: 401,
+  // POST: authenticate and set session cookie
+  if (request.method === 'POST') {
+    let body;
+    try {
+      body = await request.formData();
+    } catch (_) {
+      try { body = await request.json(); } catch (__) { body = null; }
+    }
+    const key = body?.get?.('key') || body?.key || '';
+    if (key !== env.DASHBOARD_KEY) {
+      return new Response(loginPage('Invalid key'), {
+        status: 401,
+        headers: { 'Content-Type': 'text/html;charset=UTF-8' },
+      });
+    }
+    const token = await createSessionToken(env);
+    const html = await renderDashboard(env.DB);
+    const res = new Response(html, {
+      headers: { 'Content-Type': 'text/html;charset=UTF-8' },
+    });
+    res.headers.set(
+      'Set-Cookie',
+      `session=${token}; Max-Age=3600; Path=/; SameSite=Strict; Secure; HttpOnly`
+    );
+    return res;
+  }
+
+  // GET: verify session cookie
+  if (sessionMatch && await verifySessionToken(sessionMatch[1], env)) {
+    const html = await renderDashboard(env.DB);
+    return new Response(html, {
       headers: { 'Content-Type': 'text/html;charset=UTF-8' },
     });
   }
 
-  const [totals, topCountries, recentVisits] = await Promise.all([
-    queryStats(env.DB),
-    queryTopCountries(env.DB),
-    queryRecent(env.DB),
-  ]);
-
-  return new Response(dashboardHtml(totals, topCountries, recentVisits), {
+  return new Response(loginPage(), {
+    status: 401,
     headers: { 'Content-Type': 'text/html;charset=UTF-8' },
   });
 }
 
-async function handleStats(request, env) {
-  const url = new URL(request.url);
-  const suppliedKey = url.searchParams.get('key') || '';
+async function renderDashboard(db) {
+  const [totals, topCountries, recentVisits] = await Promise.all([
+    queryStats(db),
+    queryTopCountries(db),
+    queryRecent(db),
+  ]);
+  return dashboardHtml(totals, topCountries, recentVisits);
+}
 
-  if (!suppliedKey || suppliedKey !== env.DASHBOARD_KEY) {
+// ── GET /stats (JSON) ──
+async function handleStats(request, env) {
+  const cookie = request.headers.get('Cookie') || '';
+  const sessionMatch = cookie.match(/session=([^;]+)/);
+
+  if (!sessionMatch || !(await verifySessionToken(sessionMatch[1], env))) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
@@ -116,6 +215,7 @@ async function handleStats(request, env) {
   return Response.json({ totals, topCountries });
 }
 
+// ── DB queries ──
 async function queryStats(db) {
   const total = await db.prepare('SELECT COUNT(*) as count FROM page_views').first();
   const unique = await db.prepare('SELECT COUNT(DISTINCT visitor_id) as count FROM page_views').first();
@@ -156,13 +256,16 @@ async function queryRecent(db) {
   return results || [];
 }
 
-function loginPage() {
+// ── HTML pages ──
+function loginPage(msg) {
+  const errorHtml = msg ? `<p style="color:#d32f2f;margin-bottom:1rem;font-size:0.85rem">${esc(msg)}</p>` : '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Page View Dashboard</title>
+<meta name="robots" content="noindex, nofollow">
 <style>
   *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
   body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif;background:#f5f5f7;color:#1d1d1f;display:flex;align-items:center;justify-content:center;min-height:100vh}
@@ -177,8 +280,9 @@ function loginPage() {
 <div class="box">
   <h1 style="font-size:1.5rem;margin-bottom:0.5rem">Dashboard Access</h1>
   <p style="color:#86868b;margin-bottom:1rem">Enter access key to continue</p>
-  <form method="GET" action="/dashboard">
-    <input type="password" name="key" placeholder="Access Key" autofocus>
+  ${errorHtml}
+  <form method="POST" action="/dashboard">
+    <input type="password" name="key" placeholder="Access Key" autofocus autocomplete="off">
     <button type="submit">View Dashboard</button>
   </form>
 </div>
@@ -193,12 +297,14 @@ function dashboardHtml(totals, countries, visits) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Page View Dashboard</title>
+<meta name="robots" content="noindex, nofollow">
 <style>
   *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
   body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif;background:#f5f5f7;color:#1d1d1f;padding:2rem}
   .container{max-width:1000px;margin:0 auto}
   h1{font-size:2rem;font-weight:700;margin-bottom:0.25rem}
-  .subtitle{color:#86868b;margin-bottom:2rem;font-size:0.9rem}
+  .subtitle{color:#86868b;margin-bottom:0.5rem;font-size:0.9rem}
+  .logout{float:right;color:#86868b;font-size:0.8rem;text-decoration:none;margin-top:-1.5rem}
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:2rem}
   .stat-card{background:#fff;padding:1.5rem;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,0.06)}
   .stat-value{font-size:2rem;font-weight:700;color:#0071e3}
@@ -213,15 +319,14 @@ function dashboardHtml(totals, countries, visits) {
   th{background:#f5f5f7;font-weight:600;color:#6e6e73;text-transform:uppercase;letter-spacing:0.03em;font-size:0.75rem}
   td{border-bottom:1px solid #f5f5f7}
   tr:last-child td{border-bottom:none}
-  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.75rem;font-weight:500}
-  .badge-new{background:#e8f5e9;color:#2e7d32}
-  .badge-return{background:#e3f2fd;color:#1565c0}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.75rem;font-weight:500;background:#e8f5e9;color:#2e7d32}
   .refresh{color:#86868b;font-size:0.8rem;margin-top:2rem;text-align:center}
   @media(max-width:600px){body{padding:1rem} .stats{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
 <div class="container">
+  <a href="/dashboard" class="logout" title="Session expires after 1 hour of inactivity">Logout</a>
   <h1>Page View Dashboard</h1>
   <p class="subtitle">Real-time visit tracking for your profile page</p>
   <div class="stats">
@@ -246,8 +351,8 @@ function dashboardHtml(totals, countries, visits) {
           <tr>
             <td>${formatTime(v.created_at)}</td>
             <td>${[v.city, v.region, v.country].filter(Boolean).join(', ') || 'Unknown'}</td>
-            <td>${v.referrer ? '<a href="'+esc(v.referrer)+'" style="color:#0071e3;text-decoration:none">'+truncate(esc(v.referrer),30)+'</a>' : 'Direct'}</td>
-            <td><span class="badge badge-new">${v.visitor_id.slice(0,8)}</span></td>
+            <td>${v.referrer ? '<a href="'+esc(v.referrer)+'" rel="noreferrer" style="color:#0071e3;text-decoration:none">'+truncate(esc(v.referrer),30)+'</a>' : 'Direct'}</td>
+            <td><span class="badge">${v.visitor_id.slice(0,8)}</span></td>
           </tr>
         `).join('')}
       </tbody>
