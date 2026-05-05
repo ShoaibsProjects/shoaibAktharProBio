@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://gc.zgo.at; connect-src 'self' https://shoaibsprojects.goatcounter.com;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://gc.zgo.at; connect-src 'self' https://shoaibsprojects.goatcounter.com https://pageview-logger.shoaibtest2.workers.dev;">
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
     <meta http-equiv="X-Frame-Options" content="DENY">
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
@@ -1219,5 +1219,27 @@
     </script>
     <script data-goatcounter="https://shoaibsprojects.goatcounter.com/count"
         async src="https://gc.zgo.at/count.js"></script>
+
+    <script>
+    (function logVisit() {
+        var WORKER_URL = 'https://pageview-logger.shoaibtest2.workers.dev';
+        if (!WORKER_URL) return;
+
+        if (sessionStorage.getItem('_pv_logged')) return;
+        sessionStorage.setItem('_pv_logged', '1');
+
+        var data = JSON.stringify({
+            pageUrl: location.href,
+            referrer: document.referrer || null
+        });
+
+        fetch(WORKER_URL + '/log-visit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: data,
+            keepalive: true
+        }).catch(function(){});
+    })();
+    </script>
 </body>
 </html>
