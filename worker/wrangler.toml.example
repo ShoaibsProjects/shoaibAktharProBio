@@ -9,3 +9,4 @@ database_id = "YOUR_DATABASE_ID"
 
 [vars]
 PAGE_URL = "https://shoaibakthar.pro"
+LOG_KEY = "your-log-key-here"

@@ -97,10 +97,15 @@ async function handleLogVisit(request, env) {
     // body can be empty
   }
 
+  // Validate shared secret to prevent unauthenticated requests
+  if (!body.key || body.key !== env.LOG_KEY) {
+    return Response.json({ ok: false, reason: 'unauthorized' }, { status: 401, headers: corsHeaders });
+  }
+
   // Validate pageUrl to prevent junk data
   const pageUrl = body.pageUrl || null;
   if (pageUrl && !pageUrl.startsWith('https://shoaibsprojects.github.io/') && !pageUrl.startsWith('http://localhost')) {
-    // Silently ignore requests from unexpected origins
+    return Response.json({ ok: false, reason: 'invalid_page_url' }, { status: 400, headers: corsHeaders });
   }
 
   const cf = request.cf || {};
@@ -345,7 +350,7 @@ function dashboardHtml(totals, countries, visits) {
   <div class="section">
     <h2>Recent Visits</h2>
     <table>
-      <thead><tr><th>Time (UTC)</th><th>Location</th><th>Source</th><th>Visitor</th></tr></thead>
+      <thead><tr><th>Time (CST)</th><th>Location</th><th>Source</th><th>Visitor</th></tr></thead>
       <tbody>
         ${visits.map(v => `
           <tr>
@@ -358,7 +363,7 @@ function dashboardHtml(totals, countries, visits) {
       </tbody>
     </table>
   </div>
-  <p class="refresh">Auto-refreshes when you reload &middot; All times in UTC</p>
+  <p class="refresh">Auto-refreshes when you reload &middot; All times in CST</p>
 </div>
 </body>
 </html>`;
@@ -374,7 +379,7 @@ function flag(code) {
 function formatTime(t) {
   if (!t) return '';
   const d = new Date(t + 'Z');
-  return d.toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZone:'UTC' });
+  return d.toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZone:'America/Chicago' });
 }
 
 function esc(s) {
