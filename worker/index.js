@@ -435,16 +435,21 @@ async function verifyTurnstile(request, env, token) {
 }
 
 async function renderDashboard(db) {
-  const [totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers] = await Promise.all([
-    queryStats(db),
-    queryTopCountries(db),
-    queryRecent(db),
-    querySeattleStats(db),
-    querySeattleAll(db),
-    queryTrend(db, 30),
-    queryTopReferrers(db),
-  ]);
-  return dashboardHtml(totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers);
+  try {
+    const [totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers] = await Promise.all([
+      queryStats(db),
+      queryTopCountries(db),
+      queryRecent(db),
+      querySeattleStats(db),
+      querySeattleAll(db),
+      queryTrend(db, 30),
+      queryTopReferrers(db)
+    ]);
+    return dashboardHtml(totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers);
+  } catch (err) {
+    console.error('renderDashboard error:', err.stack || err.message);
+    return '<html><body><h1>500</h1><pre>' + (err.stack || err.message) + '</pre></body></html>';
+  }
 }
 
 // ── GET /stats (JSON) ──
