@@ -17,7 +17,7 @@ shoaibAktharProBio/
 ## The deploy flow (do exactly this)
 ```
 git add .
-git commit -m "Update site"
+git commit -m "maintenance"
 git push
 ```
 → GitHub Build runs `npx wrangler deploy` from root
