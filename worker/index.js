@@ -1,4 +1,4 @@
-var VERSION = '3.3.0'; // bump when you change the worker code
+var VERSION = '3.4.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -1008,6 +1008,10 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   }
   function flagH(c){if(!c||c.length!==2)return'';var a=0x1F1E6-65+c.toUpperCase().charCodeAt(0),b=0x1F1E6-65+c.toUpperCase().charCodeAt(1);return String.fromCodePoint(a,b);}
   function refLinkH(r,n){return r?'<a href="'+escH(r)+'" rel="noreferrer" style="color:var(--accent);text-decoration:none">'+truncH(escH(r),n)+'</a>':'Direct';}
+  function agoH(t){if(!t)return'';var diff=Math.floor((Date.now()-new Date(t+'Z').getTime())/1000);if(diff<0)return'just now';if(diff<60)return diff+'s ago';if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';return Math.floor(diff/86400)+'d ago';}
+  function devH(v){var d=v.device_type||'Unknown';var o=v.os||'';var b=v.browser||'';var line=[o,b].filter(Boolean).join(' · ');return '<span class="badge">'+escH(d)+'</span>'+(line?' '+escH(line):(v.user_agent?(' '+escH(uaH(v.user_agent))):''));}
+  function locH(v){return escH([v.city,v.region,v.country].filter(Boolean).join(', ')||'—');}
+  function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
   function refresh(){
     fetch('/stats',{headers:{'Accept':'application/json'}})
       .then(function(r){if(r.status===401){location.href='/dashboard';return null;}return r.json();})
@@ -1033,13 +1037,13 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
           cl.innerHTML=cx.map(function(c){return '<span class="country-chip"><strong>'+c.count+'</strong> '+flagH(c.country)+' '+escH(c.country)+'</span>';}).join('');}
         var sb=document.getElementById('seattleBanner');
         if(sb&&d.seattleStats){var s=d.seattleStats;
-          sb.innerHTML='<div class="seattle-banner"><h3>Seattle Visits — All Time</h3><p>'+s.total+' total views &middot; '+s.unique+' unique visitors &middot; '+s.last30+' in last 30 days'+(s.firstSeen?' &middot; first seen '+fmtH(s.firstSeen):'')+'</p></div>';}
+          sb.innerHTML='<div class="seattle-banner"><h3>Seattle Visits — All Time</h3><p>'+s.total+' total views &middot; '+s.unique+' unique visitors &middot; '+s.last30+' in last 30 days'+(s.firstSeen?' &middot; first seen '+fmtH(s.firstSeen):'')+(s.lastSeen?' &middot; <strong>last seen '+agoH(s.lastSeen)+'</strong>':'')+'</p></div>';}
         var st=document.getElementById('seattleTbody');
         if(st){var sv=d.seattleVisits||[];
-          st.innerHTML=sv.length?sv.map(function(v){return '<tr><td>'+fmtH(v.created_at)+'</td><td>'+escH([v.region,v.country].filter(Boolean).join(', ')||'—')+'</td><td>'+refLinkH(v.referrer,28)+'</td><td style="font-size:0.78rem;color:var(--muted)">'+uaH(v.user_agent)+'</td><td><span class="badge seattle">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';}).join(''):'<tr><td colspan="5" class="empty-state">No Seattle visits recorded yet</td></tr>';}
+          st.innerHTML=sv.length?sv.map(function(v){return '<tr><td><div style="font-weight:500">'+fmtH(v.created_at)+'</div><div style="font-size:0.68rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+ispH(v)+'</td><td>'+refLinkH(v.referrer,28)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td><span class="badge seattle">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';}).join(''):'<tr><td colspan="5" class="empty-state">No Seattle visits recorded yet</td></tr>';}
         var rt=document.getElementById('recentTbody');
         if(rt){var rv=d.recent||[];
-          rt.innerHTML=rv.map(function(v){var isSea=v.city==='Seattle';return '<tr'+(isSea?' style="background:rgba(0,113,227,0.04)"':'')+'><td>'+fmtH(v.created_at)+'</td><td>'+escH([v.city,v.region,v.country].filter(Boolean).join(', ')||'Unknown')+(isSea?' <span class="badge seattle">SEA</span>':'')+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';}).join('');}
+          rt.innerHTML=rv.map(function(v){var isSea=v.city==='Seattle';return '<tr'+(isSea?' style="background:rgba(0,113,227,0.04)"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+(isSea?' <span class="badge seattle">SEA</span>':'')+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';}).join('');}
       })
       .catch(function(){});
   }
