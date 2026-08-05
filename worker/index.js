@@ -1,4 +1,4 @@
-var VERSION = '3.2.0'; // bump when you change the worker code
+var VERSION = '3.3.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -267,10 +267,13 @@ async function handleLogVisit(request, env) {
 
   const cf = request.cf || {};
   const visitorId = getVisitorId(request);
+  const language = (request.headers.get('Accept-Language') || '').split(',')[0]?.trim() || null;
+  const uaParsed = parseUADetailed(ua);
 
   const stmt = env.DB.prepare(
-    `INSERT INTO page_views (country, city, region, timezone, user_agent, referrer, page_url, visitor_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO page_views (country, city, region, timezone, user_agent, referrer, page_url, visitor_id,
+     device_type, os, browser, latitude, longitude, postal_code, isp, language)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
   await stmt.bind(
@@ -281,7 +284,15 @@ async function handleLogVisit(request, env) {
     ua || null,
     sanitizeReferrer(body.referrer || request.headers.get('Referer')) || null,
     pageUrl,
-    visitorId
+    visitorId,
+    uaParsed.device,
+    uaParsed.os,
+    uaParsed.browser,
+    cf.latitude ? String(cf.latitude) : null,
+    cf.longitude ? String(cf.longitude) : null,
+    cf.postalCode || null,
+    cf.asOrganization || null,
+    language
   ).run();
 
   console.log(JSON.stringify({ event: 'visit', ip, city: cf.city || null, country: cf.country || null }));
@@ -540,7 +551,7 @@ async function queryTopCountries(db) {
 
 async function queryRecent(db) {
   const { results } = await db.prepare(
-    `SELECT created_at, country, city, region, referrer, page_url, visitor_id
+    `SELECT created_at, country, city, region, referrer, page_url, visitor_id, device_type, os, browser
      FROM page_views
      ORDER BY created_at DESC
      LIMIT 100`
@@ -594,20 +605,22 @@ async function querySeattleStats(db) {
        (SELECT COUNT(*) FROM page_views WHERE city = 'Seattle') AS total,
        (SELECT COUNT(DISTINCT visitor_id) FROM page_views WHERE city = 'Seattle') AS uniq,
        (SELECT COUNT(*) FROM page_views WHERE city = 'Seattle' AND created_at >= datetime('now','-30 days')) AS last30,
-       (SELECT created_at FROM page_views WHERE city = 'Seattle' ORDER BY created_at ASC LIMIT 1) AS first_seen`
+       (SELECT created_at FROM page_views WHERE city = 'Seattle' ORDER BY created_at ASC LIMIT 1) AS first_seen,
+       (SELECT created_at FROM page_views WHERE city = 'Seattle' ORDER BY created_at DESC LIMIT 1) AS last_seen`
   ).first();
   return {
     total: row?.total || 0,
     unique: row?.uniq || 0,
     last30: row?.last30 || 0,
     firstSeen: row?.first_seen || null,
+    lastSeen: row?.last_seen || null,
   };
 }
 
 // ── All-time Seattle visits ──
 async function querySeattleAll(db) {
   const { results } = await db.prepare(
-    `SELECT created_at, country, region, timezone, referrer, user_agent, visitor_id
+    `SELECT created_at, country, region, timezone, referrer, user_agent, visitor_id, device_type, os, browser, latitude, longitude, postal_code, isp, language
      FROM page_views
      WHERE city = 'Seattle'
      ORDER BY created_at DESC
@@ -772,22 +785,34 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     + '<p>' + seattleStats.total + ' total views &middot; ' + seattleStats.unique + ' unique visitors &middot; '
     + seattleStats.last30 + ' in last 30 days'
     + (seattleStats.firstSeen ? ' &middot; first seen ' + formatTime(seattleStats.firstSeen) : '')
+    + (seattleStats.lastSeen ? ' &middot; <strong>last seen ' + timeAgo(seattleStats.lastSeen) + '</strong>' : '')
     + '</p></div>';
   const seattleRows = seattleVisits.length ? seattleVisits.map(v => {
-    return '<tr><td>' + formatTime(v.created_at) + '</td>'
-      + '<td>' + esc([v.region, v.country].filter(Boolean).join(', ') || '—') + '</td>'
+    const ago = timeAgo(v.created_at);
+    const loc = [v.city, v.region, v.country].filter(Boolean).join(', ') || '—';
+    const ispExtra = v.isp ? ' <span style="font-size:0.68rem;color:var(--muted)">' + esc(v.isp) + '</span>' : '';
+    const osParts = [v.os, v.browser].filter(Boolean);
+    const deviceLine = v.device_type ? ('<span class="badge" style="font-size:0.68rem">' + esc(v.device_type) + '</span> ') : '';
+    const osLine = osParts.length ? deviceLine + esc(osParts.join(' · ')) : (v.user_agent ? parseUA(v.user_agent) : '—');
+    return '<tr><td><div style="font-weight:500">' + formatTime(v.created_at) + '</div><div style="font-size:0.68rem;color:var(--muted)">' + ago + '</div></td>'
+      + '<td>' + esc(loc) + ispExtra + '</td>'
       + '<td>' + (v.referrer
         ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 28) + '</a>'
         : 'Direct') + '</td>'
-      + '<td style="font-size:0.78rem;color:var(--muted)">' + parseUA(v.user_agent) + '</td>'
+      + '<td style="font-size:0.78rem"><span class="badge">' + esc(v.device_type || 'Unknown') + '</span> ' + esc(osLine) + '</td>'
       + '<td><span class="badge seattle">' + esc(v.visitor_id.slice(0, 8)) + '</span></td></tr>';
   }).join('') : '<tr><td colspan="5" class="empty-state">No Seattle visits recorded yet</td></tr>';
   const recentRows = visits.map(v => {
     const isSea = v.city === 'Seattle';
+    const ago = timeAgo(v.created_at);
+    const loc = [v.city, v.region, v.country].filter(Boolean).join(', ') || 'Unknown';
+    const os = esc(v.os || '');
+    const browser = esc(v.browser || '');
+    const dev = esc(v.device_type || '');
     return '<tr' + (isSea ? ' style="background:rgba(0,113,227,0.04)"' : '') + '>'
-      + '<td>' + formatTime(v.created_at) + '</td>'
-      + '<td>' + esc([v.city, v.region, v.country].filter(Boolean).join(', ') || 'Unknown')
-      + (isSea ? ' <span class="badge seattle">SEA</span>' : '') + '</td>'
+      + '<td><div>' + formatTime(v.created_at) + '</div><div style="font-size:0.7rem;color:var(--muted)">' + ago + '</div></td>'
+      + '<td>' + esc(loc) + (isSea ? ' <span class="badge seattle">SEA</span>' : '') + '</td>'
+      + '<td style="font-size:0.78rem">' + (dev ? '<span class="badge">' + dev + '</span> ' : '') + ' ' + esc([os, browser].filter(Boolean).join(' · ') || '—') + '</td>'
       + '<td>' + (v.referrer
         ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 30) + '</a>'
         : 'Direct') + '</td>'
@@ -918,8 +943,8 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     <div class="table-scroll-x">
       <div class="table-scroll-y">
         <table>
-          <thead><tr><th>Time (CST)</th><th>Region</th><th>Source</th><th>Device</th><th>Visitor</th></tr></thead>
-          <tbody id="seattleTbody">${seattleRows}</tbody>
+<thead><tr><th>Time (CST)</th><th>Location · ISP</th><th>Source</th><th>Device · OS</th><th>Visitor</th></tr></thead>
+           <tbody id="seattleTbody">${seattleRows}</tbody>
         </table>
       </div>
     </div>
@@ -929,7 +954,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     <h2>Recent Visits</h2>
     <div class="table-scroll-x">
       <table>
-        <thead><tr><th>Time (CST)</th><th>Location</th><th>Source</th><th>Visitor</th></tr></thead>
+        <thead><tr><th>Time (CST)</th><th>Location</th><th>Device · OS</th><th>Source</th><th>Visitor</th></tr></thead>
         <tbody id="recentTbody">${recentRows}</tbody>
       </table>
     </div>
@@ -1042,7 +1067,7 @@ function truncate(s, n) {
   return s.length > n ? s.slice(0, n) + '...' : s;
 }
 
-// Lightweight user-agent summary (browser + device type)
+// User‑agent parser — returns short display string \+ structured fields
 function parseUA(ua) {
   if (!ua) return 'Unknown';
   let browser = 'Other';
@@ -1059,4 +1084,39 @@ function parseUA(ua) {
   const mobile = /Mobi|Android|iPhone|iPad/.test(ua);
   const device = mobile ? 'Mobile' : 'Desktop';
   return browser + ' · ' + os + ' · ' + device;
+}
+
+function parseUADetailed(ua) {
+  if (!ua) return { device: 'Unknown', os: 'Unknown', browser: 'Unknown' };
+  let browser = 'Unknown';
+  if (/Edg\//.test(ua)) browser = 'Edge';
+  else if (/SamsungBrowser\//.test(ua)) browser = 'Samsung';
+  else if (/Chrome\//.test(ua) && !/Chromium\//.test(ua)) browser = 'Chrome';
+  else if (/Firefox\//.test(ua)) browser = 'Firefox';
+  else if (/Safari\//.test(ua) && !/Chrome\//.test(ua) && !/Chromium\//.test(ua)) browser = 'Safari';
+  let os = 'Unknown';
+  if (/Windows NT 10/.test(ua)) os = 'Windows';
+  else if (/Mac OS X/.test(ua)) os = 'macOS';
+  else if (/Android/.test(ua)) os = 'Android';
+  else if (/iPhone/.test(ua)) os = 'iOS';
+  else if (/iPad/.test(ua)) os = 'iPadOS';
+  else if (/Linux/.test(ua)) os = 'Linux';
+  let device = 'Desktop';
+  if (/Tablet|iPad/.test(ua)) device = 'Tablet';
+  else if (/Mobi|Android|iPhone/.test(ua)) device = 'Mobile';
+  return { device, os, browser };
+}
+
+function timeAgo(t) {
+  if (!t) return '';
+  const diff = Math.floor((Date.now() - new Date(t + 'Z').getTime()) / 1000);
+  if (diff < 0) return 'just now';
+  if (diff < 60) return diff + 's ago';
+  const mins = Math.floor(diff / 60);
+  if (mins < 60) return mins + 'm ago';
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + 'h ago';
+  const days = Math.floor(hours / 24);
+  if (days < 30) return days + 'd ago';
+  return Math.floor(days / 30) + 'mo ago';
 }
