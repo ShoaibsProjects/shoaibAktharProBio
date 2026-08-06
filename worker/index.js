@@ -1,4 +1,4 @@
-var VERSION = '3.5.1'; // bump when you change the worker code
+var VERSION = '3.6.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -476,7 +476,7 @@ async function handleStats(request, env) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: jsonHeaders });
   }
 
-  const [totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent] = await Promise.all([
+  const [totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, mapPoints] = await Promise.all([
     queryStats(env.DB),
     queryTopCountries(env.DB),
     queryTrend(env.DB, 30),
@@ -484,9 +484,10 @@ async function handleStats(request, env) {
     querySeattleStats(env.DB),
     querySeattleAll(env.DB),
     queryRecent(env.DB),
+    queryMapPoints(env.DB),
   ]);
 
-  return Response.json({ totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent }, { headers: jsonHeaders });
+  return Response.json({ totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, mapPoints }, { headers: jsonHeaders });
 }
 
 // ── GET /health ──
@@ -630,6 +631,18 @@ async function querySeattleAll(db) {
      WHERE city = 'Seattle'
      ORDER BY created_at DESC
      LIMIT 500`
+  ).all();
+  return results || [];
+}
+
+// ── Visits with coordinates (for the map) ──
+async function queryMapPoints(db) {
+  const { results } = await db.prepare(
+    `SELECT city, region, country, postal_code, latitude, longitude, created_at
+     FROM page_views
+     WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+     ORDER BY created_at DESC
+     LIMIT 1000`
   ).all();
   return results || [];
 }
@@ -835,7 +848,9 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
 <title>Page View Dashboard</title>
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E📊%3C/text%3E%3C/svg%3E">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: https:; connect-src 'self' https://tile.openstreetmap.org">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
   :root{--bg:#f5f5f7;--surface:#fff;--text:#1d1d1f;--muted:#86868b;--dim:#6e6e73;
@@ -845,25 +860,29 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     --dim:#86868b;--border:#3a3a3d;--accent:#2997ff;--chip-shadow:0 1px 3px rgba(0,0,0,0.3);
     --card-shadow:0 1px 4px rgba(0,0,0,0.3);--header-bg:#1d1d1f}
   body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif;
-    background:var(--bg);color:var(--text);padding:2rem;transition:background 0.3s,color 0.3s}
+    background:var(--bg);color:var(--text);padding:2rem;transition:background 0.3s,color 0.3s;
+    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
   .container{max-width:1000px;margin:0 auto}
-  .top-bar{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.5rem;flex-wrap:wrap;gap:1rem}
-  h1{font-size:2rem;font-weight:700;margin-bottom:0.25rem}
+  .top-bar{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2rem;flex-wrap:wrap;gap:1rem}
+  h1{font-size:2.1rem;font-weight:700;letter-spacing:-0.02em;margin-bottom:0.35rem}
   .subtitle{color:var(--muted);margin-bottom:0.5rem;font-size:0.9rem}
-  .top-actions{display:flex;align-items:center;gap:0.6rem}
-  .theme-toggle,.logout{background:var(--surface);color:var(--muted);font-size:0.8rem;text-decoration:none;
-    padding:0.4rem 0.9rem;border-radius:8px;border:1px solid var(--border);cursor:pointer;font-family:inherit}
-  .theme-toggle:hover,.logout:hover{color:var(--accent)}
+  .top-actions{display:flex;align-items:center;gap:0.5rem}
+  .theme-toggle,.logout{background:var(--surface);color:var(--text);font-size:0.8rem;text-decoration:none;
+    padding:0.45rem 1rem;border-radius:980px;border:1px solid var(--border);cursor:pointer;font-family:inherit;
+    font-weight:500;transition:color 0.2s,border-color 0.2s,box-shadow 0.2s;box-shadow:var(--chip-shadow)}
+  .theme-toggle:hover,.logout:hover{color:var(--accent);border-color:var(--accent)}
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1.5rem}
-  .stat-card{background:var(--surface);padding:1.5rem;border-radius:14px;box-shadow:var(--card-shadow);
-    transition:transform 0.2s,box-shadow 0.2s}
-  .stat-card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,0.1)}
-  .stat-value{font-size:2rem;font-weight:700;color:var(--accent)}
-  .stat-label{font-size:0.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-top:0.25rem}
+  .stat-card{background:var(--surface);padding:1.5rem;border-radius:18px;box-shadow:var(--card-shadow);
+    transition:transform 0.2s,box-shadow 0.2s;border:1px solid var(--border)}
+  .stat-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,0.08)}
+  .stat-value{font-size:2.25rem;font-weight:700;letter-spacing:-0.03em;color:var(--text)}
+  .stat-label{font-size:0.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-top:0.35rem;font-weight:500}
   .grid-2{display:grid;grid-template-columns:1.4fr 1fr;gap:1rem;margin-bottom:1.5rem}
   @media(max-width:768px){.grid-2{grid-template-columns:1fr}}
-  .card{background:var(--surface);border-radius:14px;padding:1.5rem;box-shadow:var(--card-shadow);margin-bottom:1.5rem}
-  h2{font-size:1.15rem;font-weight:600;margin-bottom:1rem}
+  .card{background:var(--surface);border-radius:18px;padding:1.5rem;box-shadow:var(--card-shadow);margin-bottom:1.5rem;border:1px solid var(--border)}
+  h2{font-size:1.05rem;font-weight:600;margin-bottom:1rem;letter-spacing:-0.01em}
+  .card-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap}
+  .card-head h2{margin-bottom:0}
   .trend-wrap{position:relative;padding-top:0.5rem}
   svg.trend{width:100%;height:60px;display:block}
   .trend-poly{fill:rgba(0,113,227,0.08);stroke:var(--accent);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
@@ -903,7 +922,21 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   html[data-theme="dark"] .seattle-banner{background:linear-gradient(135deg,#0d1b2a,#1b3a5c);color:#64b5f6}
   .seattle-banner h3{font-size:1.1rem;font-weight:600;margin-bottom:0.25rem}
   .seattle-banner p{font-size:0.8rem;opacity:0.85}
-  @media(max-width:600px){body{padding:1rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}.seattle-banner{padding:1rem}}
+  .search-wrap{position:relative;min-width:220px}
+  .search-wrap input{width:100%;padding:0.45rem 0.9rem 0.45rem 2rem;border:1px solid var(--border);border-radius:10px;
+    background:var(--bg);color:var(--text);font-size:0.82rem;font-family:inherit;outline:none;transition:border-color 0.2s,box-shadow 0.2s}
+  .search-wrap input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,113,227,0.15)}
+  .search-wrap input::placeholder{color:var(--muted)}
+  .search-icon{position:absolute;left:0.65rem;top:50%;transform:translateY(-50%);width:14px;height:14px;
+    stroke:var(--muted);fill:none;stroke-width:2;stroke-linecap:round;pointer-events:none}
+  .map-card{padding:0;overflow:hidden}
+  .map-card .card-head{padding:1.25rem 1.5rem 0;margin-bottom:0}
+  #visitMap{width:100%;height:420px;background:var(--bg);border-top:1px solid var(--border);margin-top:1rem;z-index:0}
+  #visitMap .leaflet-container{font-family:inherit}
+  .map-note{font-size:0.72rem;color:var(--muted);padding:0.6rem 1.5rem 0.9rem}
+  .map-count{font-size:0.78rem;color:var(--muted);background:var(--bg);padding:0.3rem 0.7rem;border-radius:20px;font-weight:500}
+  .leaflet-popup-content{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif;font-size:0.8rem;line-height:1.45}
+  @media(max-width:600px){body{padding:1rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}.seattle-banner{padding:1rem}.map-card .card-head{padding:1rem 1rem 0}#visitMap{height:320px}}
 </style>
 </head>
 <body>
@@ -943,6 +976,15 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
 
   ${countries.length ? '<div class="card"><h2>Top Countries</h2><div class="country-list" id="countryList">' + countryChips + '</div></div>' : ''}
 
+  <div class="card map-card">
+    <div class="card-head">
+      <h2>Visitors Map</h2>
+      <span class="map-count" id="mapCount">…</span>
+    </div>
+    <div id="visitMap"></div>
+    <div class="map-note">Pinpoints are ISP-registered IP locations (approximate), not street addresses.</div>
+  </div>
+
   <div class="card seattle-card">
     <div id="seattleBanner">${seattleBanner}</div>
     <div class="table-scroll-x">
@@ -956,7 +998,13 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   </div>
 
   <div class="card">
-    <h2>Recent Visits</h2>
+    <div class="card-head">
+      <h2>Recent Visits</h2>
+      <div class="search-wrap">
+        <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="recentSearch" placeholder="Filter visits…" autocomplete="off" aria-label="Filter visits">
+      </div>
+    </div>
     <div class="table-scroll-x">
       <table>
         <thead><tr><th>Time (CST)</th><th>Location · Coords</th><th>Device · OS</th><th>Source</th><th>Visitor</th></tr></thead>
@@ -1012,6 +1060,48 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   function devH(v){var d=v.device_type||'Unknown';var o=v.os||'';var b=v.browser||'';var line=[o,b].filter(Boolean).join(' · ');return '<span class="badge">'+escH(d)+'</span>'+(line?' '+escH(line):(v.user_agent?(' '+escH(uaH(v.user_agent))):''));}
   function locH(v){var base=escH([v.city,v.region,v.country].filter(Boolean).join(', ')||'—');var hasLat=v.latitude!=null&&v.latitude!=='',hasLon=v.longitude!=null&&v.longitude!=='';var lat=parseFloat(v.latitude),lon=parseFloat(v.longitude);var hasCoords=hasLat&&hasLon&&!isNaN(lat)&&!isNaN(lon);var bits=[];if(hasCoords)bits.push(lat.toFixed(5)+', '+lon.toFixed(5));if(v.postal_code)bits.push(escH(v.postal_code));if(!bits.length)return base;var out='<span style="font-size:0.68rem;color:var(--muted)">'+bits.join(' · ')+'</span>';if(hasCoords)out+=' <a href="https://www.google.com/maps/search/?api=1&query='+lat+','+lon+'" target="_blank" rel="noreferrer" style="color:var(--accent);font-size:0.68rem;text-decoration:none">map</a>';return base+'<div>'+out+'</div>';}
   function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
+  // ── Search filter state ──
+  var _allRecent=[],_mapPts=[],_map=null,_markers=null;
+  function rowHtml(v,seattleStyle){
+    var isSea=v.city==='Seattle';
+    return '<tr'+(isSea?' style="background:rgba(0,113,227,0.04)"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+(isSea?' <span class="badge seattle">SEA</span>':'')+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';
+  }
+  function renderRecent(){
+    var rt=document.getElementById('recentTbody');
+    if(!rt)return;
+    var q=(document.getElementById('recentSearch')||{}).value||'';
+    q=q.trim().toLowerCase();
+    var rv=_allRecent;
+    if(q){rv=rv.filter(function(v){
+      var hay=[v.city,v.region,v.country,v.device_type,v.os,v.browser,v.isp,v.postal_code,(v.visitor_id||'').slice(0,8),v.referrer].filter(Boolean).join(' ').toLowerCase();
+      return hay.indexOf(q)!==-1;
+    });}
+    rt.innerHTML=rv.length?rv.map(rowHtml).join(''):'<tr><td colspan="5" class="empty-state">No visits match your filter</td></tr>';
+  }
+  function renderMap(){
+    var el=document.getElementById('visitMap');
+    var cnt=document.getElementById('mapCount');
+    if(!el)return;
+    if(!_map){
+      if(typeof L==='undefined'){return;}
+      _map=L.map(el,{zoomControl:true,attributionControl:false});
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(_map);
+      _markers=L.layerGroup().addTo(_map);
+    }
+    _markers.clearLayers();
+    _mapPts.forEach(function(p){
+      var lat=parseFloat(p.latitude),lon=parseFloat(p.longitude);
+      if(isNaN(lat)||isNaN(lon))return;
+      var label=[p.city,p.region,p.country].filter(Boolean).join(', ')||'Unknown';
+      var pop='<strong>'+escH(label)+'</strong>'+(p.postal_code?'<br>'+escH(p.postal_code):'')+'<br>'+escH(fmtH(p.created_at));
+      L.circleMarker([lat,lon],{radius:6,color:'#fff',weight:1.5,fillColor:'#0071e3',fillOpacity:0.85}).addTo(_markers).bindPopup(pop);
+    });
+    if(cnt)cnt.textContent=_mapPts.length+' point'+( _mapPts.length===1?'':'s');
+    if(_mapPts.length){
+      var b=_markers.getBounds();
+      if(b.isValid())_map.fitBounds(b,{padding:[24,24],maxZoom:8});
+    }
+  }
   function refresh(){
     fetch('/stats',{headers:{'Accept':'application/json'}})
       .then(function(r){if(r.status===401){location.href='/dashboard';return null;}return r.json();})
@@ -1041,15 +1131,18 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
         var st=document.getElementById('seattleTbody');
         if(st){var sv=d.seattleVisits||[];
           st.innerHTML=sv.length?sv.map(function(v){return '<tr><td><div style="font-weight:500">'+fmtH(v.created_at)+'</div><div style="font-size:0.68rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+ispH(v)+'</td><td>'+refLinkH(v.referrer,28)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td><span class="badge seattle">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';}).join(''):'<tr><td colspan="5" class="empty-state">No Seattle visits recorded yet</td></tr>';}
-        var rt=document.getElementById('recentTbody');
-        if(rt){var rv=d.recent||[];
-          rt.innerHTML=rv.map(function(v){var isSea=v.city==='Seattle';return '<tr'+(isSea?' style="background:rgba(0,113,227,0.04)"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+(isSea?' <span class="badge seattle">SEA</span>':'')+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';}).join('');}
+        _allRecent=d.recent||[];
+        _mapPts=d.mapPoints||[];
+        renderRecent();
+        renderMap();
       })
       .catch(function(){});
   }
   applyTheme();
   refresh();
   setInterval(refresh,60000);
+  var si=document.getElementById('recentSearch');
+  if(si)si.addEventListener('input',renderRecent);
 </script>
 </body>
 </html>`;
