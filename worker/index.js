@@ -1,4 +1,4 @@
-var VERSION = '3.4.0'; // bump when you change the worker code
+var VERSION = '3.5.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -556,7 +556,7 @@ async function queryTopCountries(db) {
 
 async function queryRecent(db) {
   const { results } = await db.prepare(
-    `SELECT created_at, country, city, region, referrer, page_url, visitor_id, device_type, os, browser
+    `SELECT created_at, country, city, region, referrer, page_url, visitor_id, device_type, os, browser, latitude, longitude, postal_code, isp, language
      FROM page_views
      ORDER BY created_at DESC
      LIMIT 100`
@@ -800,7 +800,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     const deviceLine = v.device_type ? ('<span class="badge" style="font-size:0.68rem">' + esc(v.device_type) + '</span> ') : '';
     const osLine = osParts.length ? deviceLine + esc(osParts.join(' · ')) : (v.user_agent ? parseUA(v.user_agent) : '—');
     return '<tr><td><div style="font-weight:500">' + formatTime(v.created_at) + '</div><div style="font-size:0.68rem;color:var(--muted)">' + ago + '</div></td>'
-      + '<td>' + esc(loc) + ispExtra + '</td>'
+      + '<td>' + esc(loc) + coordH(v) + ispExtra + '</td>'
       + '<td>' + (v.referrer
         ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 28) + '</a>'
         : 'Direct') + '</td>'
@@ -816,7 +816,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     const dev = esc(v.device_type || '');
     return '<tr' + (isSea ? ' style="background:rgba(0,113,227,0.04)"' : '') + '>'
       + '<td><div>' + formatTime(v.created_at) + '</div><div style="font-size:0.7rem;color:var(--muted)">' + ago + '</div></td>'
-      + '<td>' + esc(loc) + (isSea ? ' <span class="badge seattle">SEA</span>' : '') + '</td>'
+      + '<td>' + esc(loc) + coordH(v) + (isSea ? ' <span class="badge seattle">SEA</span>' : '') + '</td>'
       + '<td style="font-size:0.78rem">' + (dev ? '<span class="badge">' + dev + '</span> ' : '') + ' ' + esc([os, browser].filter(Boolean).join(' · ') || '—') + '</td>'
       + '<td>' + (v.referrer
         ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 30) + '</a>'
@@ -948,7 +948,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     <div class="table-scroll-x">
       <div class="table-scroll-y">
         <table>
-<thead><tr><th>Time (CST)</th><th>Location · ISP</th><th>Source</th><th>Device · OS</th><th>Visitor</th></tr></thead>
+<thead><tr><th>Time (CST)</th><th>Location · Coords</th><th>Source</th><th>Device · OS</th><th>Visitor</th></tr></thead>
            <tbody id="seattleTbody">${seattleRows}</tbody>
         </table>
       </div>
@@ -959,7 +959,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     <h2>Recent Visits</h2>
     <div class="table-scroll-x">
       <table>
-        <thead><tr><th>Time (CST)</th><th>Location</th><th>Device · OS</th><th>Source</th><th>Visitor</th></tr></thead>
+        <thead><tr><th>Time (CST)</th><th>Location · Coords</th><th>Device · OS</th><th>Source</th><th>Visitor</th></tr></thead>
         <tbody id="recentTbody">${recentRows}</tbody>
       </table>
     </div>
@@ -1010,7 +1010,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   function refLinkH(r,n){return r?'<a href="'+escH(r)+'" rel="noreferrer" style="color:var(--accent);text-decoration:none">'+truncH(escH(r),n)+'</a>':'Direct';}
   function agoH(t){if(!t)return'';var diff=Math.floor((Date.now()-new Date(t+'Z').getTime())/1000);if(diff<0)return'just now';if(diff<60)return diff+'s ago';if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';return Math.floor(diff/86400)+'d ago';}
   function devH(v){var d=v.device_type||'Unknown';var o=v.os||'';var b=v.browser||'';var line=[o,b].filter(Boolean).join(' · ');return '<span class="badge">'+escH(d)+'</span>'+(line?' '+escH(line):(v.user_agent?(' '+escH(uaH(v.user_agent))):''));}
-  function locH(v){return escH([v.city,v.region,v.country].filter(Boolean).join(', ')||'—');}
+  function locH(v){var base=escH([v.city,v.region,v.country].filter(Boolean).join(', ')||'—');var hasLat=v.latitude!=null&&v.latitude!=='',hasLon=v.longitude!=null&&v.longitude!=='';var lat=parseFloat(v.latitude),lon=parseFloat(v.longitude);var hasCoords=hasLat&&hasLon&&!isNaN(lat)&&!isNaN(lon);var bits=[];if(hasCoords)bits.push(lat.toFixed(5)+', '+lon.toFixed(5));if(v.postal_code)bits.push(escH(v.postal_code));if(!bits.length)return base;var out='<span style="font-size:0.68rem;color:var(--muted)">'+bits.join(' · ')+'</span>';if(hasCoords)out+=' <a href="https://www.openstreetmap.org/?mlat='+lat+'&mlon='+lon+'#map=15/'+lat+'/'+lon+'" target="_blank" rel="noreferrer" style="color:var(--accent);font-size:0.68rem;text-decoration:none">map</a>';return base+'<div>'+out+'</div>';}
   function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
   function refresh(){
     fetch('/stats',{headers:{'Accept':'application/json'}})
@@ -1074,6 +1074,25 @@ function esc(s) {
 
 function truncate(s, n) {
   return s.length > n ? s.slice(0, n) + '...' : s;
+}
+
+// Coord + postal detail line with an OpenStreetMap link (shown when IP geo gave coords)
+function coordH(v) {
+  const hasLat = v.latitude != null && v.latitude !== '';
+  const hasLon = v.longitude != null && v.longitude !== '';
+  const lat = parseFloat(v.latitude);
+  const lon = parseFloat(v.longitude);
+  const hasCoords = hasLat && hasLon && !isNaN(lat) && !isNaN(lon);
+  const bits = [];
+  if (hasCoords) bits.push(lat.toFixed(5) + ', ' + lon.toFixed(5));
+  if (v.postal_code) bits.push(esc(v.postal_code));
+  if (!bits.length) return '';
+  let out = '<span style="font-size:0.68rem;color:var(--muted)">' + bits.join(' · ') + '</span>';
+  if (hasCoords) {
+    out += ' <a href="https://www.openstreetmap.org/?mlat=' + lat + '&mlon=' + lon
+      + '#map=15/' + lat + '/' + lon + '" target="_blank" rel="noreferrer" style="color:var(--accent);font-size:0.68rem;text-decoration:none">map</a>';
+  }
+  return '<div>' + out + '</div>';
 }
 
 // User‑agent parser — returns short display string \+ structured fields
