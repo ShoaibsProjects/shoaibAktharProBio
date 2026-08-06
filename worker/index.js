@@ -1,4 +1,4 @@
-var VERSION = '3.7.0'; // bump when you change the worker code
+var VERSION = '3.7.1'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -23,6 +23,8 @@ export default {
         response = handleHealth(request, env);
       } else if (path === '/meta') {
         response = await handleMeta(request, env);
+      } else if (path.startsWith('/leaflet/')) {
+        response = env.ASSETS ? await env.ASSETS.fetch(request) : new Response('Not Found', { status: 404, headers: securityHeaders() });
       } else {
         response = new Response('Not Found', { status: 404, headers: securityHeaders() });
       }
