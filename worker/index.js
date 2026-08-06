@@ -1,4 +1,4 @@
-var VERSION = '3.7.1'; // bump when you change the worker code
+var VERSION = '3.8.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -23,8 +23,6 @@ export default {
         response = handleHealth(request, env);
       } else if (path === '/meta') {
         response = await handleMeta(request, env);
-      } else if (path.startsWith('/leaflet/')) {
-        response = env.ASSETS ? await env.ASSETS.fetch(request) : new Response('Not Found', { status: 404, headers: securityHeaders() });
       } else {
         response = new Response('Not Found', { status: 404, headers: securityHeaders() });
       }
@@ -478,7 +476,7 @@ async function handleStats(request, env) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: jsonHeaders });
   }
 
-  const [totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, mapPoints] = await Promise.all([
+  const [totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent] = await Promise.all([
     queryStats(env.DB),
     queryTopCountries(env.DB),
     queryTrend(env.DB, 30),
@@ -486,10 +484,9 @@ async function handleStats(request, env) {
     querySeattleStats(env.DB),
     querySeattleAll(env.DB),
     queryRecent(env.DB),
-    queryMapPoints(env.DB),
   ]);
 
-  return Response.json({ totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, mapPoints }, { headers: jsonHeaders });
+  return Response.json({ totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent }, { headers: jsonHeaders });
 }
 
 // ── GET /health ──
@@ -633,18 +630,6 @@ async function querySeattleAll(db) {
      WHERE city = 'Seattle'
      ORDER BY created_at DESC
      LIMIT 500`
-  ).all();
-  return results || [];
-}
-
-// ── Visits with coordinates (for the map) ──
-async function queryMapPoints(db) {
-  const { results } = await db.prepare(
-    `SELECT city, region, country, postal_code, latitude, longitude, created_at
-     FROM page_views
-     WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-     ORDER BY created_at DESC
-     LIMIT 1000`
   ).all();
   return results || [];
 }
@@ -851,8 +836,6 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E📊%3C/text%3E%3C/svg%3E">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'">
-<link rel="stylesheet" href="/leaflet/leaflet.css">
-<script src="/leaflet/leaflet.js"></script>
 <style>
   *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
   :root{--bg:#f5f5f7;--surface:#fff;--text:#1d1d1f;--muted:#86868b;--dim:#6e6e73;
@@ -931,14 +914,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   .search-wrap input::placeholder{color:var(--muted)}
   .search-icon{position:absolute;left:0.65rem;top:50%;transform:translateY(-50%);width:14px;height:14px;
     stroke:var(--muted);fill:none;stroke-width:2;stroke-linecap:round;pointer-events:none}
-  .map-card{padding:0;overflow:hidden}
-  .map-card .card-head{padding:1.25rem 1.5rem 0;margin-bottom:0}
-  #visitMap{width:100%;height:420px;background:var(--bg);border-top:1px solid var(--border);margin-top:1rem;z-index:0}
-  #visitMap .leaflet-container{font-family:inherit}
-  .map-note{font-size:0.72rem;color:var(--muted);padding:0.6rem 1.5rem 0.9rem}
-  .map-count{font-size:0.78rem;color:var(--muted);background:var(--bg);padding:0.3rem 0.7rem;border-radius:20px;font-weight:500}
-  .leaflet-popup-content{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif;font-size:0.8rem;line-height:1.45}
-  @media(max-width:600px){body{padding:1rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}.seattle-banner{padding:1rem}.map-card .card-head{padding:1rem 1rem 0}#visitMap{height:320px}}
+  @media(max-width:600px){body{padding:1rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}.seattle-banner{padding:1rem}}
 </style>
 </head>
 <body>
@@ -977,15 +953,6 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   </div>
 
   ${countries.length ? '<div class="card"><h2>Top Countries</h2><div class="country-list" id="countryList">' + countryChips + '</div></div>' : ''}
-
-  <div class="card map-card">
-    <div class="card-head">
-      <h2>Visitors Map</h2>
-      <span class="map-count" id="mapCount">…</span>
-    </div>
-    <div id="visitMap"></div>
-    <div class="map-note">Pinpoints are ISP-registered IP locations (approximate), not street addresses.</div>
-  </div>
 
   <div class="card seattle-card">
     <div id="seattleBanner">${seattleBanner}</div>
@@ -1063,7 +1030,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   function locH(v){var base=escH([v.city,v.region,v.country].filter(Boolean).join(', ')||'—');var hasLat=v.latitude!=null&&v.latitude!=='',hasLon=v.longitude!=null&&v.longitude!=='';var lat=parseFloat(v.latitude),lon=parseFloat(v.longitude);var hasCoords=hasLat&&hasLon&&!isNaN(lat)&&!isNaN(lon);var bits=[];if(hasCoords)bits.push(lat.toFixed(5)+', '+lon.toFixed(5));if(v.postal_code)bits.push(escH(v.postal_code));if(!bits.length)return base;var out='<span style="font-size:0.68rem;color:var(--muted)">'+bits.join(' · ')+'</span>';if(hasCoords)out+=' <a href="https://www.google.com/maps/search/?api=1&query='+lat+','+lon+'" target="_blank" rel="noreferrer" style="color:var(--accent);font-size:0.68rem;text-decoration:none">map</a>';return base+'<div>'+out+'</div>';}
   function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
   // ── Search filter state ──
-  var _allRecent=[],_mapPts=[],_map=null,_markers=null;
+  var _allRecent=[];
   function rowHtml(v,seattleStyle){
     var isSea=v.city==='Seattle';
     return '<tr'+(isSea?' style="background:rgba(0,113,227,0.04)"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+(isSea?' <span class="badge seattle">SEA</span>':'')+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';
@@ -1079,30 +1046,6 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
       return hay.indexOf(q)!==-1;
     });}
     rt.innerHTML=rv.length?rv.map(rowHtml).join(''):'<tr><td colspan="5" class="empty-state">No visits match your filter</td></tr>';
-  }
-  function renderMap(){
-    var el=document.getElementById('visitMap');
-    var cnt=document.getElementById('mapCount');
-    if(!el)return;
-    if(!_map){
-      if(typeof L==='undefined'){return;}
-      _map=L.map(el,{zoomControl:true,attributionControl:false});
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(_map);
-      _markers=L.layerGroup().addTo(_map);
-    }
-    _markers.clearLayers();
-    _mapPts.forEach(function(p){
-      var lat=parseFloat(p.latitude),lon=parseFloat(p.longitude);
-      if(isNaN(lat)||isNaN(lon))return;
-      var label=[p.city,p.region,p.country].filter(Boolean).join(', ')||'Unknown';
-      var pop='<strong>'+escH(label)+'</strong>'+(p.postal_code?'<br>'+escH(p.postal_code):'')+'<br>'+escH(fmtH(p.created_at));
-      L.circleMarker([lat,lon],{radius:6,color:'#fff',weight:1.5,fillColor:'#0071e3',fillOpacity:0.85}).addTo(_markers).bindPopup(pop);
-    });
-    if(cnt)cnt.textContent=_mapPts.length+' point'+( _mapPts.length===1?'':'s');
-    if(_mapPts.length){
-      var b=_markers.getBounds();
-      if(b.isValid())_map.fitBounds(b,{padding:[24,24],maxZoom:8});
-    }
   }
   function refresh(){
     fetch('/stats',{headers:{'Accept':'application/json'}})
@@ -1134,9 +1077,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
         if(st){var sv=d.seattleVisits||[];
           st.innerHTML=sv.length?sv.map(function(v){return '<tr><td><div style="font-weight:500">'+fmtH(v.created_at)+'</div><div style="font-size:0.68rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+ispH(v)+'</td><td>'+refLinkH(v.referrer,28)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td><span class="badge seattle">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';}).join(''):'<tr><td colspan="5" class="empty-state">No Seattle visits recorded yet</td></tr>';}
         _allRecent=d.recent||[];
-        _mapPts=d.mapPoints||[];
         renderRecent();
-        renderMap();
       })
       .catch(function(){});
   }
