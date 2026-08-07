@@ -1,4 +1,4 @@
-var VERSION = '3.10.0'; // bump when you change the worker code
+var VERSION = '3.11.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -203,6 +203,7 @@ async function handleLogVisit(request, env) {
   base['Access-Control-Allow-Origin'] = origin;
   base['Access-Control-Allow-Methods'] = 'POST, OPTIONS';
   base['Access-Control-Allow-Headers'] = 'Content-Type';
+  base['Access-Control-Allow-Credentials'] = 'true';
 
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: base });
@@ -266,9 +267,9 @@ async function handleLogVisit(request, env) {
   }
 
   const cf = request.cf || {};
-  const visitorId = getVisitorId(request);
   const language = (request.headers.get('Accept-Language') || '').split(',')[0]?.trim() || null;
   const uaParsed = parseUADetailed(ua);
+  const { id: visitorId, fromCookie } = await getVisitorId(request, ua, language);
 
   const stmt = env.DB.prepare(
     `INSERT INTO page_views (country, city, region, timezone, user_agent, referrer, page_url, visitor_id,
@@ -295,27 +296,65 @@ async function handleLogVisit(request, env) {
     language
   ).run();
 
-  console.log(JSON.stringify({ event: 'visit', ip, city: cf.city || null, country: cf.country || null }));
+  console.log(JSON.stringify({ event: 'visit', ip, city: cf.city || null, country: cf.country || null, known: fromCookie }));
 
   const response = Response.json({ ok: true }, { headers: base });
 
-  if (!request.headers.get('Cookie')?.includes('visitor_id=')) {
-    response.headers.set(
-      'Set-Cookie',
-      `visitor_id=${visitorId}; Max-Age=31536000; Path=/; SameSite=Lax; Secure; HttpOnly`
-    );
-  }
+  // Always (re)issue the cookie so it survives cross-origin (Site=other, SameSite=None)
+  // and persists for a year. Echo back the SAME id we just stored so future visits
+  // from this browser collapse onto this row regardless of IP/network changes.
+  response.headers.set(
+    'Set-Cookie',
+    `visitor_id=${visitorId}; Max-Age=31536000; Path=/; SameSite=None; Secure; HttpOnly`
+  );
+  if (fromCookie) console.log(JSON.stringify({ event: 'visit_known', ip }));
+  else console.log(JSON.stringify({ event: 'visit_new', ip, visitor_id: visitorId }));
 
   return response;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const FP_RE = /^fp-[0-9a-f]{10,16}$/i;
 
-function getVisitorId(request) {
+// Stable, server-side visitor identity. Priority:
+//   1) visitor_id cookie (persists 1yr across IP/network/region changes) — the
+//      browser only sends it cross-origin once we set SameSite=None + the site
+//      calls fetch with credentials:'include'.
+//   2) fingerprint hash of (normalized UA + Accept-Language) — collapses the
+//      same device across cookieless visits (incognito, cookie-blocked, first
+//      hit) and across IP/network changes. Coarse on purpose: on a low-traffic
+//      personal site, under-counting two strangers who share a UA is acceptable;
+//      the current behaviour (everyone unique) is the bug we're fixing.
+//   3) fresh random UUID — only if both above fail (shouldn't happen in practice).
+// Returns { id, fromCookie }.
+async function getVisitorId(request, ua, language) {
   const cookie = request.headers.get('Cookie') || '';
   const match = cookie.match(/visitor_id=([^;]+)/);
-  if (match && UUID_RE.test(match[1])) return match[1];
-  return crypto.randomUUID();
+  if (match && (UUID_RE.test(match[1]) || FP_RE.test(match[1]))) {
+    return { id: match[1], fromCookie: true };
+  }
+  const fp = await sha256Hex(`${normalizeUA(ua)}|${(language || '').toLowerCase()}`);
+  return { id: 'fp-' + fp.slice(0, 12), fromCookie: false };
+}
+
+function normalizeUA(ua) {
+  // Strip build/version noise that changes frequently for the same device
+  // (Chrome patch versions etc.), so a browser update doesn't split one
+  // person into two visitor ids.
+  return (ua || '')
+    .replace(/Chrome\/[\d.]+/g, 'Chrome')
+    .replace(/CriOS\/[\d.]+/g, 'CriOS')
+    .replace(/Version\/[\d.]+/g, 'Version')
+    .replace(/Mobile\/[\dA-Z]+/g, 'Mobile')
+    .toLowerCase();
+}
+
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  const bytes = new Uint8Array(buf);
+  let hex = '';
+  for (const b of bytes) hex += b.toString(16).padStart(2, '0');
+  return hex;
 }
 
 // ── POST /logout ──

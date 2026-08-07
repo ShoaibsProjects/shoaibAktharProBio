@@ -1603,7 +1603,8 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: data,
-            keepalive: true
+            keepalive: true,
+            credentials: 'include'
         }).catch(function(){});
     })();
     </script>
