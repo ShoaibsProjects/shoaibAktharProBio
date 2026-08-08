@@ -1,4 +1,4 @@
-var VERSION = '3.11.0'; // bump when you change the worker code
+var VERSION = '3.11.1'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -269,7 +269,7 @@ async function handleLogVisit(request, env) {
   const cf = request.cf || {};
   const language = (request.headers.get('Accept-Language') || '').split(',')[0]?.trim() || null;
   const uaParsed = parseUADetailed(ua);
-  const { id: visitorId, fromCookie } = await getVisitorId(request, ua, language);
+  const { id: visitorId, fromCookie } = await getVisitorId(request, ua, language, cf);
 
   const stmt = env.DB.prepare(
     `INSERT INTO page_views (country, city, region, timezone, user_agent, referrer, page_url, visitor_id,
@@ -320,20 +320,23 @@ const FP_RE = /^fp-[0-9a-f]{10,16}$/i;
 //   1) visitor_id cookie (persists 1yr across IP/network/region changes) — the
 //      browser only sends it cross-origin once we set SameSite=None + the site
 //      calls fetch with credentials:'include'.
-//   2) fingerprint hash of (normalized UA + Accept-Language) — collapses the
-//      same device across cookieless visits (incognito, cookie-blocked, first
-//      hit) and across IP/network changes. Coarse on purpose: on a low-traffic
-//      personal site, under-counting two strangers who share a UA is acceptable;
-//      the current behaviour (everyone unique) is the bug we're fixing.
+//   2) fingerprint hash of (normalized UA + Accept-Language + ISP + country) —
+//      collapses the same device across cookieless visits (incognito,
+//      cookie-blocked, first hit) and across IP changes within the same
+//      carrier, WITHOUT merging two strangers who share a generic Android
+//      webview UA. ISP+country keep Chennai-Airtel-en-IN separate from
+//      Sacramento-T-Mobile-en-US even when the UA string is byte-identical.
 //   3) fresh random UUID — only if both above fail (shouldn't happen in practice).
 // Returns { id, fromCookie }.
-async function getVisitorId(request, ua, language) {
+async function getVisitorId(request, ua, language, cf = {}) {
   const cookie = request.headers.get('Cookie') || '';
   const match = cookie.match(/visitor_id=([^;]+)/);
   if (match && (UUID_RE.test(match[1]) || FP_RE.test(match[1]))) {
     return { id: match[1], fromCookie: true };
   }
-  const fp = await sha256Hex(`${normalizeUA(ua)}|${(language || '').toLowerCase()}`);
+  const isp = (cf.asOrganization || '').toLowerCase();
+  const country = (cf.country || '').toLowerCase();
+  const fp = await sha256Hex(`${normalizeUA(ua)}|${(language || '').toLowerCase()}|${isp}|${country}`);
   return { id: 'fp-' + fp.slice(0, 12), fromCookie: false };
 }
 
