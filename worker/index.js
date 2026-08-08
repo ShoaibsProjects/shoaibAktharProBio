@@ -1,4 +1,4 @@
-var VERSION = '3.13.0'; // bump when you change the worker code
+var VERSION = '3.14.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -847,18 +847,24 @@ function loginPage(msg, env) {
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E📊%3C/text%3E%3C/svg%3E">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
+<svg style="position:fixed;width:0;height:0" aria-hidden="true"><defs>
+<filter id="lg-login" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+<feTurbulence type="fractalNoise" baseFrequency="0.01 0.014" numOctaves="2" seed="12" result="noise"/>
+<feDisplacementMap in="SourceGraphic" in2="noise" scale="16" xChannelSelector="R" yChannelSelector="G"/>
+</filter>
+</defs></svg>
 <style>
   *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
   :root{--bg:#eef0f6;--surface:rgba(255,255,255,0.6);--text:#1d1d1f;--muted:#86868b;--accent:#0071e3;
     --border:rgba(255,255,255,0.5);--border-soft:rgba(20,24,32,0.08);--accent-soft:rgba(0,113,227,0.10);
-    --glass:linear-gradient(135deg,rgba(255,255,255,0.74),rgba(255,255,255,0.28));
-    --card-shadow:0 8px 32px rgba(0,113,227,0.10),0 2px 8px rgba(20,24,32,0.05),inset 0 1px 0 rgba(255,255,255,0.75);
-    --sheen:linear-gradient(115deg,rgba(255,255,255,0.55) 0%,rgba(255,255,255,0.10) 28%,transparent 55%,rgba(255,255,255,0.12) 78%,transparent 100%)}
+    --glass:linear-gradient(150deg,rgba(255,255,255,0.8) 0%,rgba(255,255,255,0.4) 50%,rgba(255,255,255,0.15) 100%);
+    --card-shadow:0 20px 60px -10px rgba(0,80,180,0.18),inset 0 1px 0 rgba(255,255,255,0.85),inset 0 -1px 0 rgba(255,255,255,0.25);
+    --sheen:linear-gradient(115deg,rgba(255,255,255,0.7) 0%,rgba(255,255,255,0.12) 18%,transparent 40%,rgba(255,255,255,0.0) 60%,rgba(255,255,255,0.2) 82%,transparent 100%)}
   html[data-theme="dark"]{--bg:#0e1015;--surface:rgba(28,31,38,0.6);--text:#f5f5f7;--muted:#a1a1a6;--accent:#2997ff;
     --border:rgba(255,255,255,0.14);--border-soft:rgba(255,255,255,0.09);--accent-soft:rgba(41,151,255,0.16);
-    --glass:linear-gradient(135deg,rgba(58,68,92,0.44),rgba(28,31,38,0.28));
-    --card-shadow:0 14px 44px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.14),inset 0 0 24px rgba(41,151,255,0.05);
-    --sheen:linear-gradient(115deg,rgba(255,255,255,0.16) 0%,rgba(255,255,255,0.03) 28%,transparent 55%,rgba(255,255,255,0.04) 78%,transparent 100%)}
+    --glass:linear-gradient(150deg,rgba(70,80,110,0.5) 0%,rgba(30,34,44,0.3) 50%,rgba(20,22,30,0.18) 100%);
+    --card-shadow:0 20px 60px -10px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.16),inset 0 -1px 0 rgba(0,0,0,0.4);
+    --sheen:linear-gradient(115deg,rgba(255,255,255,0.22) 0%,rgba(255,255,255,0.04) 18%,transparent 40%,transparent 60%,rgba(255,255,255,0.06) 82%,transparent 100%)}
   @media (prefers-color-scheme: dark){
     :root{--bg:#0e1015;--surface:rgba(28,31,38,0.6);--text:#f5f5f7;--muted:#a1a1a6;--accent:#2997ff;
       --border:rgba(255,255,255,0.14);--border-soft:rgba(255,255,255,0.09);--accent-soft:rgba(41,151,255,0.16);
@@ -866,34 +872,40 @@ function loginPage(msg, env) {
       --card-shadow:0 14px 44px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.14),inset 0 0 24px rgba(41,151,255,0.05);
       --sheen:linear-gradient(115deg,rgba(255,255,255,0.16) 0%,rgba(255,255,255,0.03) 28%,transparent 55%,rgba(255,255,255,0.04) 78%,transparent 100%)}
   }
-  body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;transition:background 0.3s,color 0.3s;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-  body::before{content:'';position:fixed;inset:-20%;z-index:-1;
+  body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;transition:background 0.4s,color 0.4s;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow:hidden}
+  body::before,body::after{content:'';position:fixed;inset:-30%;z-index:-2;pointer-events:none}
+  body::before{
     background:
-      radial-gradient(900px 620px at 12% 4%,#d8e9ff 0%,transparent 55%),
-      radial-gradient(820px 560px at 92% 8%,#e5dbff 0%,transparent 52%),
-      radial-gradient(980px 700px at 55% 100%,#d3f3e2 0%,transparent 55%),
-      var(--bg);
-    animation:aurora 26s ease-in-out infinite alternate}
-  html[data-theme="dark"] body::before{background:
-      radial-gradient(900px 620px at 12% 4%,rgba(41,151,255,0.22) 0%,transparent 55%),
-      radial-gradient(820px 560px at 92% 8%,rgba(124,92,255,0.24) 0%,transparent 52%),
-      radial-gradient(980px 700px at 55% 100%,rgba(48,209,88,0.10) 0%,transparent 55%),
-      var(--bg)}
-  @keyframes aurora{0%{transform:translate3d(0,0,0)}100%{transform:translate3d(-3%,2%,0)}}
+      radial-gradient(700px 500px at 10% 0%,#d0e4ff 0%,transparent 50%),
+      radial-gradient(800px 550px at 92% 5%,#ecd9ff 0%,transparent 48%),
+      radial-gradient(900px 600px at 50% 95%,#d0f5e0 0%,transparent 50%),
+      linear-gradient(160deg,#eef2fb 0%,#e8ecf6 100%);
+    animation:aurora 28s ease-in-out infinite alternate}
+  body::after{background:radial-gradient(50% 35% at 50% 0%,rgba(255,255,255,0.7) 0%,transparent 70%);animation:aurora-glow 20s ease-in-out infinite alternate;mix-blend-mode:overlay}
+  html[data-theme="dark"] body::before{
+    background:
+      radial-gradient(700px 500px at 10% 0%,rgba(25,80,170,0.3) 0%,transparent 50%),
+      radial-gradient(800px 550px at 92% 5%,rgba(80,40,170,0.32) 0%,transparent 48%),
+      radial-gradient(900px 600px at 50% 95%,rgba(15,110,60,0.22) 0%,transparent 50%),
+      linear-gradient(160deg,#0c0f18 0%,#0e111a 100%)}
+  html[data-theme="dark"] body::after{background:radial-gradient(50% 35% at 50% 0%,rgba(120,160,255,0.14) 0%,transparent 70%);mix-blend-mode:screen}
+  @keyframes aurora{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(-3%,2%,0) scale(1.04)}}
+  @keyframes aurora-glow{0%{opacity:0.5}100%{opacity:0.95}}
   @keyframes fadeInUp{from{opacity:0;transform:translateY(26px) scale(0.99)}to{opacity:1;transform:translateY(0) scale(1)}}
   h1{background:linear-gradient(115deg,var(--text) 35%,var(--muted));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-  .box{background:var(--glass);padding:3rem;border-radius:26px;box-shadow:var(--card-shadow);text-align:center;max-width:400px;width:90%;position:relative;overflow:hidden;border:1px solid var(--border);backdrop-filter:blur(40px) saturate(190%);-webkit-backdrop-filter:blur(40px) saturate(190%);animation:fadeInUp 0.6s cubic-bezier(.22,.61,.36,1) both}
+  .box{background:var(--glass);padding:3rem;border-radius:28px;box-shadow:var(--card-shadow);text-align:center;max-width:400px;width:90%;position:relative;overflow:hidden;border:1px solid var(--border);backdrop-filter:blur(50px) saturate(200%) url(#lg-login);-webkit-backdrop-filter:blur(50px) saturate(200%);animation:fadeInUp 0.6s cubic-bezier(.22,.61,.36,1) both}
+  .box::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(120% 80% at 0% 0%,rgba(255,255,255,0.8) 0%,rgba(255,255,255,0.0) 50%);opacity:0.7}
   .box::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--sheen);mix-blend-mode:screen;z-index:0}
   .box>*{position:relative;z-index:1}
   .theme-toggle{position:absolute;top:1rem;right:1rem;background:var(--glass);color:var(--muted);border:1px solid var(--border);padding:0.35rem 0.7rem;border-radius:980px;font-size:0.75rem;cursor:pointer;font-family:inherit;font-weight:600;backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 8px rgba(20,24,32,0.05);transition:color 0.2s,border-color 0.2s,box-shadow 0.2s}
   .theme-toggle:hover{color:var(--accent);border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.8)}
-  input{width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:14px;font-size:16px;margin:1rem 0;font-family:inherit;background:rgba(255,255,255,0.55);color:var(--text);font-weight:500;transition:border-color 0.2s,box-shadow 0.2s;outline:none;backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 8px rgba(20,24,32,0.05)}
-  html[data-theme="dark"] input{background:rgba(40,44,55,0.55)}
+  input{width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:16px;font-size:16px;margin:1rem 0;font-family:inherit;background:rgba(255,255,255,0.5);color:var(--text);font-weight:500;transition:border-color 0.2s,box-shadow 0.2s;outline:none;backdrop-filter:blur(30px) saturate(200%);-webkit-backdrop-filter:blur(30px) saturate(200%);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 8px rgba(20,24,32,0.05)}
+  html[data-theme="dark"] input{background:rgba(40,44,55,0.5)}
   input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.7)}
-  button{background:linear-gradient(180deg,#0a84ff,var(--accent));color:#fff;border:none;padding:12px 32px;border-radius:980px;font-size:16px;cursor:pointer;font-family:inherit;font-weight:600;letter-spacing:0.01em;transition:transform 0.25s cubic-bezier(.22,.61,.36,1),box-shadow 0.25s,opacity 0.2s;box-shadow:0 6px 20px rgba(0,113,227,0.35),inset 0 1px 0 rgba(255,255,255,0.4)}
-  button:hover{transform:translateY(-1px);box-shadow:0 10px 28px rgba(0,113,227,0.45),inset 0 1px 0 rgba(255,255,255,0.5)}
-  html[data-theme="dark"] button{background:linear-gradient(180deg,#3aa0ff,#2997ff);box-shadow:0 6px 20px rgba(41,151,255,0.40),inset 0 1px 0 rgba(255,255,255,0.3)}
-  html[data-theme="dark"] button:hover{box-shadow:0 10px 28px rgba(41,151,255,0.50),inset 0 1px 0 rgba(255,255,255,0.4)}
+  button{background:linear-gradient(180deg,#0a84ff,var(--accent));color:#fff;border:none;padding:12px 32px;border-radius:980px;font-size:16px;cursor:pointer;font-family:inherit;font-weight:600;letter-spacing:0.01em;transition:transform 0.25s cubic-bezier(.22,.61,.36,1),box-shadow 0.25s,opacity 0.2s;box-shadow:0 8px 24px rgba(0,113,227,0.4),inset 0 1px 0 rgba(255,255,255,0.45),inset 0 -1px 0 rgba(0,0,0,0.15)}
+  button:hover{transform:translateY(-1px);box-shadow:0 12px 32px rgba(0,113,227,0.5),inset 0 1px 0 rgba(255,255,255,0.55),inset 0 -1px 0 rgba(0,0,0,0.15)}
+  html[data-theme="dark"] button{background:linear-gradient(180deg,#3aa0ff,#2997ff);box-shadow:0 8px 24px rgba(41,151,255,0.45),inset 0 1px 0 rgba(255,255,255,0.35),inset 0 -1px 0 rgba(0,0,0,0.2)}
+  html[data-theme="dark"] button:hover{box-shadow:0 12px 32px rgba(41,151,255,0.55),inset 0 1px 0 rgba(255,255,255,0.45)}
   .pw-wrap{position:relative;margin:1rem 0}
   .pw-wrap input{margin:0;padding-right:48px}
   .eye-btn{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;padding:8px;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center}
