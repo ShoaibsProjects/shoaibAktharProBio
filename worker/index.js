@@ -1,4 +1,4 @@
-var VERSION = '3.16.1'; // bump when you change the worker code
+var VERSION = '3.16.2'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -1467,7 +1467,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     var uaShort = p.uas && p.uas[0] ? (p.uas[0].indexOf('iPhone')>=0 ? 'iPhone' : p.uas[0].indexOf('Macintosh')>=0 ? 'Mac' : p.uas[0].indexOf('Android')>=0 ? 'Android' : 'Browser') : '?';
     var citiesStr = p.cities.slice(0,4).join(', ') + (p.cities.length>4 ? ' +'+(p.cities.length-4) : '');
     var prob = p.visits > 3 ? 'high' : p.visits > 1 ? 'med' : 'low';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-id">'+esc(p.id.slice(0,10))+'</span><span class="prob prob-'+prob+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits</div><div class="profile-loc">'+esc(citiesStr)+'</div><div class="profile-meta">'+esc(uaShort)+' · '+esc(p.countries.slice(0,2).join(', ')||'?')+'<br><span style="font-size:0.68rem">'+timeAgo(p.firstSeen)+' → '+timeAgo(p.lastSeen)+'</span></div><div class="profile-actions"><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button><button class="profile-del" data-vid="'+esc(p.id)+'" title="Delete all visits for this visitor">delete</button></div></div>';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-id" data-orig="'+esc(p.id.slice(0,10))+'">'+esc(p.id.slice(0,10))+'</span><span class="prob prob-'+prob+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits</div><div class="profile-loc">'+esc(citiesStr)+'</div><div class="profile-meta">'+esc(uaShort)+' · '+esc(p.countries.slice(0,2).join(', ')||'?')+'<br><span style="font-size:0.68rem">'+timeAgo(p.firstSeen)+' → '+timeAgo(p.lastSeen)+'</span></div><div class="profile-actions"><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button><button class="profile-del" data-vid="'+esc(p.id)+'" title="Delete all visits for this visitor">delete</button></div></div>';
   }).join('') + '</div></div>' : ''}
 
   <div class="grid-2">
@@ -1670,7 +1670,9 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     if(!_mergeSource){
       _mergeSource=vid;
       _mergeBtn=btn;
-      btn.textContent='---';btn.style.opacity='0.5';
+      btn.textContent='→ target';btn.style.opacity='0.6';
+      var label=btn.closest('.profile-card').querySelector('.profile-id');
+      if(label)label.textContent='PICK TARGET';
       return;
     }
     // Second click: pick target
@@ -1689,7 +1691,12 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   });
   function resetMergeUI(){
     _mergeSource=null;
-    if(_mergeBtn){_mergeBtn.textContent='merge';_mergeBtn.style.opacity='';_mergeBtn=null;}
+    if(_mergeBtn){
+      _mergeBtn.textContent='merge';_mergeBtn.style.opacity='';
+      var label=_mergeBtn.closest('.profile-card').querySelector('.profile-id');
+      if(label)label.textContent=label.getAttribute('data-orig')||label.textContent;
+      _mergeBtn=null;
+    }
   }
 </script>
 </body>
