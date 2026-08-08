@@ -1,4 +1,4 @@
-var VERSION = '3.11.1'; // bump when you change the worker code
+var VERSION = '3.11.2'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -296,7 +296,7 @@ async function handleLogVisit(request, env) {
     language
   ).run();
 
-  console.log(JSON.stringify({ event: 'visit', ip, city: cf.city || null, country: cf.country || null, known: fromCookie }));
+  console.log(JSON.stringify({ event: 'visit', ip, city: cf.city || null, country: cf.country || null, known: fromCookie, vid: visitor_id_preview(visitorId) }));
 
   const response = Response.json({ ok: true }, { headers: base });
 
@@ -305,21 +305,26 @@ async function handleLogVisit(request, env) {
   // from this browser collapse onto this row regardless of IP/network changes.
   response.headers.set(
     'Set-Cookie',
-    `visitor_id=${visitorId}; Max-Age=31536000; Path=/; SameSite=None; Secure; HttpOnly`
+    `${VID_COOKIE}=${visitorId}; Max-Age=31536000; Path=/; SameSite=None; Secure; HttpOnly`
   );
-  if (fromCookie) console.log(JSON.stringify({ event: 'visit_known', ip }));
-  else console.log(JSON.stringify({ event: 'visit_new', ip, visitor_id: visitorId }));
 
   return response;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const FP_RE = /^fp-[0-9a-f]{10,16}$/i;
+const FP_RE = /^fp-[0-9a-f]{12}$/;
+const VID_COOKIE = 'vid2';
 
 // Stable, server-side visitor identity. Priority:
-//   1) visitor_id cookie (persists 1yr across IP/network/region changes) — the
-//      browser only sends it cross-origin once we set SameSite=None + the site
-//      calls fetch with credentials:'include'.
+//   1) vid2 cookie (persists 1yr across IP/network/region changes) — the browser
+//      only sends it cross-origin once we set SameSite=None + the site calls
+//      fetch with credentials:'include'. We bumped the cookie name from
+//      'visitor_id' -> 'vid2' so that any cookies minted under the previous,
+//      over-coarse fingerprint scheme are simply ignored (browsers send the
+//      stale one, we don't recognise it, we re-fingerprint cleanly). This also
+//      stops an attacker from pinning an arbitrary id: the regex below only
+//      accepts a real UUID or one of our 12-hex 'fp-...' ids — never a free-
+//      form value they drafted.
 //   2) fingerprint hash of (normalized UA + Accept-Language + ISP + country) —
 //      collapses the same device across cookieless visits (incognito,
 //      cookie-blocked, first hit) and across IP changes within the same
@@ -330,9 +335,10 @@ const FP_RE = /^fp-[0-9a-f]{10,16}$/i;
 // Returns { id, fromCookie }.
 async function getVisitorId(request, ua, language, cf = {}) {
   const cookie = request.headers.get('Cookie') || '';
-  const match = cookie.match(/visitor_id=([^;]+)/);
-  if (match && (UUID_RE.test(match[1]) || FP_RE.test(match[1]))) {
-    return { id: match[1], fromCookie: true };
+  const match = cookie.match(new RegExp(VID_COOKIE + '=([^;]+)'));
+  const candidate = match ? match[1] : '';
+  if (candidate && (UUID_RE.test(candidate) || FP_RE.test(candidate))) {
+    return { id: candidate, fromCookie: true };
   }
   const isp = (cf.asOrganization || '').toLowerCase();
   const country = (cf.country || '').toLowerCase();
@@ -358,6 +364,12 @@ async function sha256Hex(str) {
   let hex = '';
   for (const b of bytes) hex += b.toString(16).padStart(2, '0');
   return hex;
+}
+
+// Short, safe-to-log preview of a visitor id (first 8 chars after any prefix).
+function visitor_id_preview(id) {
+  if (!id) return null;
+  return String(id).replace(/^fp-/, '').slice(0, 8);
 }
 
 // ── POST /logout ──
