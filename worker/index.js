@@ -1,4 +1,4 @@
-var VERSION = '3.16.4'; // bump when you change the worker code
+var VERSION = '3.17.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -275,10 +275,15 @@ async function handleLogVisit(request, env) {
   const uaParsed = parseUADetailed(ua);
   const { id: visitorId, fromCookie } = await getVisitorId(request, ua, language, cf);
 
+  // Hash the IP (SHA-256, first 12 hex chars) — privacy-preserving same-device signal.
+  // If two visits share the same IP hash, they came from the same subnet/household.
+  const ipHash = await sha256Hex(ip);
+  const colo = cf.colo || null;
+
   const stmt = env.DB.prepare(
     `INSERT INTO page_views (country, city, region, timezone, user_agent, referrer, page_url, visitor_id,
-     device_type, os, browser, latitude, longitude, postal_code, isp, language)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     device_type, os, browser, latitude, longitude, postal_code, isp, language, ip_hash, colo)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
   await stmt.bind(
@@ -297,7 +302,9 @@ async function handleLogVisit(request, env) {
     cf.longitude ? String(cf.longitude) : null,
     cf.postalCode || null,
     cf.asOrganization || null,
-    language
+    language,
+    ipHash.slice(0, 16),
+    colo
   ).run();
 
   console.log(JSON.stringify({ event: 'visit', ip, city: cf.city || null, country: cf.country || null, known: fromCookie, vid: visitor_id_preview(visitorId) }));
@@ -891,7 +898,9 @@ async function queryVisitorProfiles(db) {
             GROUP_CONCAT(DISTINCT os) as oss,
             GROUP_CONCAT(DISTINCT browser) as browsers,
             GROUP_CONCAT(DISTINCT language) as langs,
-            GROUP_CONCAT(DISTINCT timezone) as timezones
+            GROUP_CONCAT(DISTINCT timezone) as timezones,
+            GROUP_CONCAT(DISTINCT ip_hash) as ip_hashes,
+            GROUP_CONCAT(DISTINCT colo) as colos
      FROM page_views
      GROUP BY visitor_id
      ORDER BY visits DESC`
@@ -912,6 +921,8 @@ async function queryVisitorProfiles(db) {
     browsers: [...new Set((r.browsers || '').split(',').filter(Boolean))],
     langs: [...new Set((r.langs || '').split(',').filter(Boolean))],
     timezones: [...new Set((r.timezones || '').split(',').filter(Boolean))],
+    ipHashes: [...new Set((r.ip_hashes || '').split(',').filter(Boolean))],
+    colos: [...new Set((r.colos || '').split(',').filter(Boolean))],
   }));
 }
 
@@ -1403,7 +1414,9 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     var uaShort = p.uas && p.uas[0] ? (p.uas[0].indexOf('iPhone')>=0 ? 'iPhone' : p.uas[0].indexOf('Macintosh')>=0 ? 'Mac' : p.uas[0].indexOf('Android')>=0 ? 'Android' : 'Browser') : '?';
     var citiesStr = p.cities.slice(0,4).join(', ') + (p.cities.length>4 ? ' +'+(p.cities.length-4) : '');
     var prob = p.visits > 3 ? 'high' : p.visits > 1 ? 'med' : 'low';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-id" data-orig="'+esc(p.id.slice(0,10))+'">'+esc(p.id.slice(0,10))+'</span><span class="prob prob-'+prob+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits</div><div class="profile-loc">'+esc(citiesStr)+'</div><div class="profile-meta">'+esc(uaShort)+' · '+esc(p.countries.slice(0,2).join(', ')||'?')+'<br><span style="font-size:0.68rem">'+timeAgo(p.firstSeen)+' → '+timeAgo(p.lastSeen)+'</span></div><div class="profile-actions"><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
+    var ipList=p.ipHashes&&p.ipHashes.length?p.ipHashes.map(function(h){return h.slice(0,8);}).join(', '):'';
+    var ispList=p.isps&&p.isps.length?p.isps.join(', '):'';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-id" data-orig="'+esc(p.id.slice(0,10))+'">'+esc(p.id.slice(0,10))+'</span><span class="prob prob-'+prob+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits</div><div class="profile-loc">'+esc(citiesStr)+'</div><div class="profile-meta">'+esc(uaShort)+' · '+esc(p.countries.slice(0,2).join(', ')||'?')+ (ispList?' · '+esc(ispList):'')+'<br><span style="font-size:0.68rem">'+timeAgo(p.firstSeen)+' → '+timeAgo(p.lastSeen)+(ipList?' · IP: '+ipList:'')+'</span></div><div class="profile-actions"><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
   }).join('') + '</div></div>' : ''}
 
   <div class="grid-2">
@@ -1468,7 +1481,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   function applyTheme(){
     var m=window.matchMedia('(prefers-color-scheme: dark)');
     var t=readTheme()||(m.matches?'dark':'light');
-    if(t==='dark'){document.documentElement.setAttribute('data-theme','dark');}
+    document.documentElement.setAttribute('data-theme',t);
     document.getElementById('themeToggle').textContent=(t==='dark')?'Light':'Dark';
     return t;
   }
