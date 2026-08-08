@@ -1,4 +1,4 @@
-var VERSION = '3.15.0'; // bump when you change the worker code
+var VERSION = '3.16.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -25,6 +25,10 @@ export default {
         response = await handleEvent(request, env);
       } else if (path === '/api/delete-visit') {
         response = await handleDeleteVisit(request, env);
+      } else if (path === '/api/delete-visitor') {
+        response = await handleDeleteVisitor(request, env);
+      } else if (path === '/api/merge-visitors') {
+        response = await handleMergeVisitors(request, env);
       } else if (path === '/meta') {
         response = await handleMeta(request, env);
       } else {
@@ -419,6 +423,54 @@ async function handleDeleteVisit(request, env) {
   return Response.json({ ok: false, reason: 'not_found' }, { status: 404, headers: h });
 }
 
+// ── DELETE /api/delete-visitor/:vid (session-gated, delete ALL visits for a visitor) ──
+async function handleDeleteVisitor(request, env) {
+  const h = securityHeaders({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
+  if (request.method !== 'DELETE') return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: h });
+
+  const session = sessionTokenFrom(request.headers.get('Cookie') || '');
+  if (!session || !(await verifySessionToken(session, env))) {
+    return Response.json({ error: 'unauthorized' }, { status: 401, headers: h });
+  }
+
+  const url = new URL(request.url);
+  const parts = url.pathname.split('/').filter(Boolean);
+  const vid = String(parts[parts.length - 1] || '');
+  if (!vid) return Response.json({ error: 'bad_visitor' }, { status: 400, headers: h });
+
+  const info = await env.DB.prepare('DELETE FROM page_views WHERE visitor_id = ?').bind(vid).run();
+  const deleted = (info && info.changes) || 0;
+  console.log(JSON.stringify({ event: 'visitor_deleted', vid, deleted }));
+  return Response.json({ ok: true, deleted, visitor: vid }, { headers: h });
+}
+
+// ── POST /api/merge-visitors (session-gated, merge all visits from source → target) ──
+async function handleMergeVisitors(request, env) {
+  const h = securityHeaders({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
+  if (request.method !== 'POST') return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: h });
+
+  const session = sessionTokenFrom(request.headers.get('Cookie') || '');
+  if (!session || !(await verifySessionToken(session, env))) {
+    return Response.json({ error: 'unauthorized' }, { status: 401, headers: h });
+  }
+
+  let body = {};
+  try { body = await request.json(); } catch (_) { return Response.json({ error: 'bad_json' }, { status: 400, headers: h }); }
+
+  const source = String(body.source || '');
+  const target = String(body.target || '');
+  if (!source || !target || source === target) {
+    return Response.json({ error: 'bad_params' }, { status: 400, headers: h });
+  }
+
+  const info = await env.DB.prepare('UPDATE page_views SET visitor_id = ? WHERE visitor_id = ?').bind(target, source).run();
+  const merged = (info && info.changes) || 0;
+  console.log(JSON.stringify({ event: 'visitors_merged', source, target, merged }));
+  return Response.json({ ok: true, merged, source, target }, { headers: h });
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FP_RE = /^fp-[0-9a-f]{12}$/;
 const VID_COOKIE = 'vid2';
@@ -609,7 +661,7 @@ async function verifyTurnstile(request, env, token) {
 
 async function renderDashboard(db) {
   try {
-    const [totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers, engagement] = await Promise.all([
+    const [totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers, engagement, profiles] = await Promise.all([
       queryStats(db),
       queryTopCountries(db),
       queryRecent(db),
@@ -618,8 +670,9 @@ async function renderDashboard(db) {
       queryTrend(db, 30),
       queryTopReferrers(db),
       queryEngagement(db),
+      queryVisitorProfiles(db),
     ]);
-    return dashboardHtml(totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers, engagement);
+    return dashboardHtml(totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers, engagement, profiles);
   } catch (err) {
     console.error('renderDashboard error:', err.stack || err.message);
     return '<html><body><h1>500</h1><pre>' + (err.stack || err.message) + '</pre></body></html>';
@@ -650,7 +703,7 @@ async function handleStats(request, env) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: jsonHeaders });
   }
 
-  const [totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, engagement] = await Promise.all([
+  const [totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, engagement, profiles] = await Promise.all([
     queryStats(env.DB),
     queryTopCountries(env.DB),
     queryTrend(env.DB, 30),
@@ -659,9 +712,10 @@ async function handleStats(request, env) {
     querySeattleAll(env.DB),
     queryRecent(env.DB),
     queryEngagement(env.DB),
+    queryVisitorProfiles(env.DB),
   ]);
 
-  return Response.json({ totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, engagement }, { headers: jsonHeaders });
+  return Response.json({ totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, engagement, profiles }, { headers: jsonHeaders });
 }
 
 // ── GET /health ──
@@ -857,6 +911,46 @@ async function querySeattleAll(db) {
   return results || [];
 }
 
+// ── Grouped visitor profiles (one box per device/person) ──
+async function queryVisitorProfiles(db) {
+  const { results } = await db.prepare(
+    `SELECT visitor_id,
+            COUNT(*) as visits,
+            MIN(created_at) as first_seen,
+            MAX(created_at) as last_seen,
+            GROUP_CONCAT(DISTINCT city) as cities,
+            GROUP_CONCAT(DISTINCT region) as regions,
+            GROUP_CONCAT(DISTINCT country) as countries,
+            GROUP_CONCAT(DISTINCT isp) as isps,
+            GROUP_CONCAT(DISTINCT user_agent) as uas,
+            GROUP_CONCAT(DISTINCT device_type) as devices,
+            GROUP_CONCAT(DISTINCT os) as oss,
+            GROUP_CONCAT(DISTINCT browser) as browsers,
+            GROUP_CONCAT(DISTINCT language) as langs,
+            GROUP_CONCAT(DISTINCT timezone) as timezones
+     FROM page_views
+     GROUP BY visitor_id
+     ORDER BY visits DESC`
+  ).all();
+
+  return (results || []).map(r => ({
+    id: r.visitor_id,
+    visits: r.visits || 0,
+    firstSeen: r.first_seen,
+    lastSeen: r.last_seen,
+    cities: [...new Set((r.cities || '').split(',').filter(Boolean))],
+    regions: [...new Set((r.regions || '').split(',').filter(Boolean))],
+    countries: [...new Set((r.countries || '').split(',').filter(Boolean))],
+    isps: [...new Set((r.isps || '').split(',').filter(Boolean))],
+    uas: [...new Set((r.uas || '').split(',').filter(Boolean))],
+    devices: [...new Set((r.devices || '').split(',').filter(Boolean))],
+    oss: [...new Set((r.oss || '').split(',').filter(Boolean))],
+    browsers: [...new Set((r.browsers || '').split(',').filter(Boolean))],
+    langs: [...new Set((r.langs || '').split(',').filter(Boolean))],
+    timezones: [...new Set((r.timezones || '').split(',').filter(Boolean))],
+  }));
+}
+
 // ── HTML pages ──
 function loginPage(msg, env) {
   const errorHtml = msg ? `<p style="color:#d32f2f;margin-bottom:1rem;font-size:0.85rem">${esc(msg)}</p>` : '';
@@ -1039,7 +1133,7 @@ ${hasTurnstile ? `<script>
 </html>`;
 }
 
-function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, trend, referrers, engagement) {
+function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, trend, referrers, engagement, profiles) {
   const trendMax = Math.max(1, ...trend.map(t => t.count));
   const trendPoints = trend.length ? trend.map((t, i) => {
     const x = (trend.length === 1) ? 50 : (i / (trend.length - 1)) * 100;
@@ -1258,6 +1352,29 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   .del-btn{background:none;border:none;color:var(--muted);font-size:1.1rem;line-height:1;cursor:pointer;padding:2px 6px;border-radius:6px;opacity:0.4;transition:opacity 0.15s,color 0.15s,background 0.15s}
   .del-btn:hover{opacity:1;color:#d32f2f;background:rgba(211,47,47,0.1)}
   html[data-theme="dark"] .del-btn:hover{background:rgba(211,47,47,0.2);color:#ef5350}
+  .profile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem;margin-top:0.5rem}
+  .profile-card{position:relative;background:linear-gradient(150deg,rgba(255,255,255,0.6),rgba(255,255,255,0.25));border:1px solid var(--border);border-radius:var(--radius-md);padding:1.1rem;box-shadow:inset 0 1px 0 rgba(255,255,255,0.6);transition:transform 0.2s,box-shadow 0.2s}
+  .profile-card:hover{transform:translateY(-2px);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 8px 24px rgba(0,80,180,0.12)}
+  .profile-head{display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem}
+  .profile-icon{font-size:1.3rem}
+  .profile-id{font-family:monospace;font-size:0.72rem;color:var(--muted)}
+  .prob{font-size:0.6rem;padding:2px 6px;border-radius:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.03em}
+  .prob-high{background:rgba(46,125,50,0.15);color:#2e7d32}
+  .prob-med{background:rgba(245,124,0,0.15);color:#e65100}
+  .prob-low{background:rgba(117,117,117,0.15);color:#616161}
+  .profile-visits{font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:0.3rem}
+  .profile-visits strong{font-variant-numeric:tabular-nums}
+  .profile-loc{font-size:0.78rem;color:var(--accent);margin-bottom:0.4rem}
+  .profile-meta{font-size:0.7rem;color:var(--muted);line-height:1.4}
+  .profile-actions{display:flex;gap:0.4rem;margin-top:0.7rem}
+  .profile-merge,.profile-del{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
+  .profile-merge:hover{border-color:var(--accent);color:var(--accent);background:rgba(0,113,227,0.08)}
+  .profile-del:hover{border-color:#d32f2f;color:#d32f2f;background:rgba(211,47,47,0.08)}
+  html[data-theme="dark"] .profile-card{background:linear-gradient(150deg,rgba(50,58,78,0.5),rgba(28,31,38,0.35))}
+  html[data-theme="dark"] .profile-merge,html[data-theme="dark"] .profile-del{background:rgba(255,255,255,0.06)}
+  html[data-theme="dark"] .prob-high{background:rgba(76,175,80,0.2);color:#81c784}
+  html[data-theme="dark"] .prob-med{background:rgba(255,152,0,0.2);color:#ffb74d}
+  html[data-theme="dark"] .prob-low{background:rgba(158,158,158,0.2);color:#bdbdbd}
   .table-scroll-x{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius)}
   .table-scroll-y{max-height:520px;width:100%;overflow-y:auto;-webkit-overflow-scrolling:touch}
   .table-scroll-y table{box-shadow:none;border-radius:0}
@@ -1322,6 +1439,14 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">${(engagement&&engagement.topClicks||[]).length}</div><div class="stat-label">Most-Clicked</div></div>
     <div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">${(engagement&&engagement.topClicks||[]).slice(0,3).map(c=>esc(c.target)+' <strong>'+c.count+'</strong>').join(' &middot; ')||'—'}</div></div>
   </div>
+
+  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem"><h2>Visitor Profiles</h2><p style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem">Each box is one device/person. Same visitor ID = same device. Click merge to combine profiles you recognize as the same person.</p><div class="profile-grid" id="profileGrid">' + profiles.map(function(p,i){
+    var devIcon = p.devices && p.devices[0] ? (p.devices[0].toLowerCase().indexOf('mobile')>=0 ? '📱' : p.devices[0].toLowerCase().indexOf('desktop')>=0 ? '💻' : '📲') : '📱';
+    var uaShort = p.uas && p.uas[0] ? (p.uas[0].indexOf('iPhone')>=0 ? 'iPhone' : p.uas[0].indexOf('Macintosh')>=0 ? 'Mac' : p.uas[0].indexOf('Android')>=0 ? 'Android' : 'Browser') : '?';
+    var citiesStr = p.cities.slice(0,4).join(', ') + (p.cities.length>4 ? ' +'+(p.cities.length-4) : '');
+    var prob = p.visits > 3 ? 'high' : p.visits > 1 ? 'med' : 'low';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-id">'+esc(p.id.slice(0,10))+'</span><span class="prob prob-'+prob+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits</div><div class="profile-loc">'+esc(citiesStr)+'</div><div class="profile-meta">'+esc(uaShort)+' · '+esc(p.countries.slice(0,2).join(', ')||'?')+'<br><span style="font-size:0.68rem">'+timeAgo(p.firstSeen)+' → '+timeAgo(p.lastSeen)+'</span></div><div class="profile-actions"><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button><button class="profile-del" data-vid="'+esc(p.id)+'" title="Delete all visits for this visitor">delete</button></div></div>';
+  }).join('') + '</div></div>' : ''}
 
   <div class="grid-2">
     <div class="card">
@@ -1493,6 +1618,60 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
       })
       .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='×';});
   });
+
+  // Profile delete — removes ALL visits for a visitor
+  document.addEventListener('click',function(e){
+    var btn=e.target.closest('.profile-del');
+    if(!btn)return;
+    var vid=btn.getAttribute('data-vid');
+    if(!vid)return;
+    if(!confirm('Delete ALL visits for visitor '+vid.slice(0,8)+'? This removes all their data permanently.'))return;
+    btn.disabled=true;btn.textContent='…';
+    fetch('/api/delete-visitor/'+encodeURIComponent(vid),{method:'DELETE',credentials:'include'})
+      .then(function(r){return r.json().catch(function(){return{ok:false}});})
+      .then(function(d){
+        if(d&&d.ok){window.location.reload();}
+        else{alert('Delete failed: '+(d&&d.error||'error'));btn.disabled=false;btn.textContent='delete';}
+      })
+      .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='delete';});
+  });
+
+  // Profile merge — combine two visitor profiles
+  var _mergeSource=null;
+  document.addEventListener('click',function(e){
+    var btn=e.target.closest('.profile-merge');
+    if(!btn)return;
+    var vid=btn.getAttribute('data-vid');
+    if(!vid)return;
+    if(!_mergeSource){
+      _mergeSource=vid;
+      btn.textContent='paste target…';
+      btn.style.borderColor='var(--accent)';
+      btn.style.color='var(--accent)';
+      document.querySelectorAll('.profile-merge').forEach(function(b){
+        if(b!==btn){b.disabled=true;b.style.opacity='0.4';}
+      });
+      alert('Now click "merge" on the TARGET profile you want to merge INTO. "'+vid.slice(0,8)+'" will be merged into it.');
+      return;
+    }
+    if(_mergeSource===vid){_mergeSource=null;resetMergeUI();return;}
+    var target=vid;
+    if(!confirm('Merge "'+_mergeSource.slice(0,8)+'" into "'+target.slice(0,8)+'"? All visits from source will get the target ID.')){_mergeSource=null;resetMergeUI();return;}
+    fetch('/api/merge-visitors',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:_mergeSource,target:target})})
+      .then(function(r){return r.json().catch(function(){return{ok:false}});})
+      .then(function(d){
+        _mergeSource=null;resetMergeUI();
+        if(d&&d.ok){window.location.reload();}
+        else{alert('Merge failed: '+(d&&d.error||'error'));}
+      })
+      .catch(function(){_mergeSource=null;resetMergeUI();alert('Network error');});
+  });
+  function resetMergeUI(){
+    _mergeSource=null;
+    document.querySelectorAll('.profile-merge').forEach(function(b){
+      b.textContent='merge';b.disabled=false;b.style.opacity='';b.style.borderColor='';b.style.color='';
+    });
+  }
 </script>
 </body>
 </html>`;
