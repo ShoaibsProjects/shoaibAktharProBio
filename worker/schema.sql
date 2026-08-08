@@ -29,3 +29,21 @@ CREATE TABLE IF NOT EXISTS sessions (
   jti TEXT PRIMARY KEY,
   exp INTEGER NOT NULL
 );
+
+-- Engagement tracking: heartbeats, clicks, pagehide events per session.
+CREATE TABLE IF NOT EXISTS page_engagement (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT DEFAULT (datetime('now')),
+  visitor_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  page_url TEXT,
+  x INTEGER,
+  y INTEGER,
+  target TEXT,
+  extra TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_eng_visitor ON page_engagement(visitor_id);
+CREATE INDEX IF NOT EXISTS idx_eng_session ON page_engagement(session_id);
+CREATE INDEX IF NOT EXISTS idx_eng_type ON page_engagement(event_type);

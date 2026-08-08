@@ -1111,28 +1111,39 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',system-ui,sans-serif;
     background:var(--bg);color:var(--text);padding:2rem 1.25rem;min-height:100vh;
     transition:background 0.4s,color 0.4s;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-  body::before,body::after{content:'';position:fixed;inset:-30%;z-index:-2;pointer-events:none}
+  body::before,body::after,body>.aurora-layer{content:'';position:fixed;inset:-30%;z-index:-2;pointer-events:none}
   body::before{
     background:
-      radial-gradient(800px 600px at 8% 2%,#cfe3ff 0%,transparent 50%),
-      radial-gradient(900px 650px at 90% 5%,#e8dcff 0%,transparent 48%),
-      radial-gradient(1000px 700px at 50% 95%,#d6f5e3 0%,transparent 50%),
-      radial-gradient(700px 500px at 30% 60%,#ffe0f0 0%,transparent 45%),
-      linear-gradient(160deg,#eef2fb 0%,#e8ecf6 100%);
-    animation:aurora 28s ease-in-out infinite alternate}
+      radial-gradient(750px 550px at 10% 5%,rgba(99,157,255,0.55) 0%,rgba(99,157,255,0.18) 30%,transparent 55%),
+      radial-gradient(850px 600px at 88% 8%,rgba(167,119,255,0.5) 0%,rgba(167,119,255,0.15) 30%,transparent 52%),
+      radial-gradient(950px 650px at 45% 92%,rgba(56,217,169,0.45) 0%,rgba(56,217,169,0.12) 30%,transparent 50%),
+      radial-gradient(650px 480px at 25% 55%,rgba(255,138,199,0.4) 0%,rgba(255,138,199,0.1) 30%,transparent 48%),
+      linear-gradient(160deg,#f0f4ff 0%,#eef0fa 100%);
+    animation:aurora 28s ease-in-out infinite alternate;filter:blur(30px)}
   body::after{
-    background:radial-gradient(60% 40% at 50% 0%,rgba(255,255,255,0.6) 0%,transparent 70%);
-    animation:aurora-glow 18s ease-in-out infinite alternate;mix-blend-mode:overlay}
+    background:radial-gradient(55% 35% at 50% 0%,rgba(255,255,255,0.7) 0%,transparent 65%);
+    animation:aurora-glow 18s ease-in-out infinite alternate;mix-blend-mode:overlay;filter:none}
+  body>.aurora-layer{
+    background:
+      radial-gradient(500px 400px at 70% 30%,rgba(120,180,255,0.35) 0%,transparent 60%),
+      radial-gradient(450px 380px at 15% 75%,rgba(180,140,255,0.3) 0%,transparent 55%);
+    animation:aurora-2 22s ease-in-out infinite alternate;mix-blend-mode:screen;filter:blur(40px)}
+  html[data-theme="dark"] body>.aurora-layer{
+    background:
+      radial-gradient(500px 400px at 70% 30%,rgba(60,120,220,0.3) 0%,transparent 60%),
+      radial-gradient(450px 380px at 15% 75%,rgba(120,80,200,0.25) 0%,transparent 55%);
+    mix-blend-mode:screen}
   html[data-theme="dark"] body::before{
     background:
-      radial-gradient(800px 600px at 8% 2%,rgba(30,90,180,0.28) 0%,transparent 50%),
-      radial-gradient(900px 650px at 90% 5%,rgba(90,50,180,0.3) 0%,transparent 48%),
-      radial-gradient(1000px 700px at 50% 95%,rgba(20,120,70,0.2) 0%,transparent 50%),
-      radial-gradient(700px 500px at 30% 60%,rgba(150,30,90,0.18) 0%,transparent 45%),
-      linear-gradient(160deg,#0c0f18 0%,#0e111a 100%)}
-  html[data-theme="dark"] body::after{background:radial-gradient(60% 40% at 50% 0%,rgba(120,160,255,0.12) 0%,transparent 70%);mix-blend-mode:screen}
+      radial-gradient(750px 550px at 10% 5%,rgba(40,100,220,0.4) 0%,rgba(40,100,220,0.12) 30%,transparent 55%),
+      radial-gradient(850px 600px at 88% 8%,rgba(110,60,220,0.38) 0%,rgba(110,60,220,0.1) 30%,transparent 52%),
+      radial-gradient(950px 650px at 45% 92%,rgba(20,160,100,0.32) 0%,rgba(20,160,100,0.08) 30%,transparent 50%),
+      radial-gradient(650px 480px at 25% 55%,rgba(200,50,120,0.28) 0%,rgba(200,50,120,0.08) 30%,transparent 48%),
+      linear-gradient(160deg,#0a0d16 0%,#0c0f1a 100%)}
+  html[data-theme="dark"] body::after{background:radial-gradient(55% 35% at 50% 0%,rgba(100,150,255,0.18) 0%,transparent 65%);mix-blend-mode:screen}
   @keyframes aurora{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(-3%,2%,0) scale(1.04)}}
   @keyframes aurora-glow{0%{opacity:0.5;transform:translate3d(0,0,0)}100%{opacity:0.9;transform:translate3d(2%,-2%,0)}}
+  @keyframes aurora-2{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(2%,-3%,0) scale(1.06)}}
   @keyframes glass-morph{0%{border-radius:var(--radius)}50%{border-radius:calc(var(--radius) + 4px)}100%{border-radius:var(--radius)}}
   @keyframes fadeInUp{from{opacity:0;transform:translateY(26px) scale(0.99)}to{opacity:1;transform:translateY(0) scale(1)}}
   .stat-card>*,.card>*,.top-bar>*{position:relative;z-index:1}
@@ -1253,6 +1264,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
 <feDisplacementMap in="SourceGraphic" in2="noise" scale="10" xChannelSelector="R" yChannelSelector="G"/>
 </filter>
 </defs></svg>
+<div class="aurora-layer" aria-hidden="true"></div>
 <div class="container">
   <div class="top-bar">
     <div>
