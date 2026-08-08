@@ -1,4 +1,4 @@
-var VERSION = '3.16.2'; // bump when you change the worker code
+var VERSION = '3.16.3'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -615,7 +615,7 @@ async function handleDashboard(request, env) {
     } catch (_) {
       try { body = await request.json(); } catch (__) { body = null; }
     }
-    if (false && env.TURNSTILE_SECRET) {
+    if (env.TURNSTILE_SECRET) {
       const token = (body && typeof body.get === 'function' ? (body.get('turnstile') || body.get('cf-turnstile-response') || '') : '') || '';
       const okT = await verifyTurnstile(request, env, token);
       if (!okT) {
@@ -1658,46 +1658,34 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
       .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='delete';});
   });
 
-  // Profile merge — simple: click src, then click target
-  var _mergeSource=null;
-  var _mergeBtn=null;
+  // Profile merge — one-click: shows input for target ID
   document.addEventListener('click',function(e){
     var btn=e.target.closest('.profile-merge');
     if(!btn)return;
-    var vid=btn.getAttribute('data-vid');
-    if(!vid)return;
-    // First click: pick source
-    if(!_mergeSource){
-      _mergeSource=vid;
-      _mergeBtn=btn;
-      btn.textContent='→ target';btn.style.opacity='0.6';
-      var label=btn.closest('.profile-card').querySelector('.profile-id');
-      if(label)label.textContent='PICK TARGET';
-      return;
-    }
-    // Second click: pick target
-    var target=vid;
-    if(_mergeSource===target){resetMergeUI();return;}
-    var merged=_mergeSource.slice(0,8)+' → '+target.slice(0,8);
-    if(!confirm('Merge '+_mergeSource.slice(0,10)+' into '+target.slice(0,10)+'?')){resetMergeUI();return;}
-    fetch('/api/merge-visitors',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:_mergeSource,target:target})})
+    e.preventDefault();e.stopPropagation();
+    var src=btn.getAttribute('data-vid');
+    if(!src)return;
+    var cards=document.querySelectorAll('.profile-card');
+    var ids=[];cards.forEach(function(c){var v=c.getAttribute('data-vid');if(v&&v!==src)ids.push(v);});
+    if(!ids.length){alert('No other profiles to merge into.');return;}
+    var tgt=prompt('Merge '+src.slice(0,10)+' into:\n'+ids.map(function(v,i){return '  ['+i+'] '+v.slice(0,10);}).join('\n')+'\n\nEnter number or ID:',ids[0]);
+    if(!tgt)return;
+    // Accept either index or full ID
+    var idx=parseInt(tgt,10);
+    var target=(idx>=0&&idx<ids.length)?ids[idx]:tgt.trim();
+    if(target===src||ids.indexOf(target)<0){alert('Invalid target.');return;}
+    if(!confirm('MERGE: '+src.slice(0,10)+' → '+target.slice(0,10)+'?'))return;
+    btn.disabled=true;btn.textContent='…';
+    fetch('/api/merge-visitors',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src,target:target})})
       .then(function(r){return r.json().catch(function(){return{ok:false}});})
       .then(function(d){
-        resetMergeUI();
         if(d&&d.ok){window.location.reload();}
-        else{alert('Merge failed: '+(d&&d.error||'unknown'));}
+        else{alert('Merge failed: '+(d&&d.error||'unknown'));btn.disabled=false;btn.textContent='merge';}
       })
-      .catch(function(){resetMergeUI();alert('Network error');});
+      .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='merge';});
   });
-  function resetMergeUI(){
-    _mergeSource=null;
-    if(_mergeBtn){
-      _mergeBtn.textContent='merge';_mergeBtn.style.opacity='';
-      var label=_mergeBtn.closest('.profile-card').querySelector('.profile-id');
-      if(label)label.textContent=label.getAttribute('data-orig')||label.textContent;
-      _mergeBtn=null;
-    }
-  }
+
+  function resetMergeUI(){}
 </script>
 </body>
 </html>`;
