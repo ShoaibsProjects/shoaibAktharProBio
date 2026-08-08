@@ -439,10 +439,14 @@ async function handleDeleteVisitor(request, env) {
   const vid = String(parts[parts.length - 1] || '');
   if (!vid) return Response.json({ error: 'bad_visitor' }, { status: 400, headers: h });
 
-  const info = await env.DB.prepare('DELETE FROM page_views WHERE visitor_id = ?').bind(vid).run();
-  const deleted = (info && info.changes) || 0;
-  console.log(JSON.stringify({ event: 'visitor_deleted', vid, deleted }));
-  return Response.json({ ok: true, deleted, visitor: vid }, { headers: h });
+  const [r1, r2] = await Promise.all([
+    env.DB.prepare('DELETE FROM page_views WHERE visitor_id = ?').bind(vid).run(),
+    env.DB.prepare('DELETE FROM page_engagement WHERE visitor_id = ?').bind(vid).run(),
+  ]);
+  const deleted = (r1 && r1.changes) || 0;
+  const engDeleted = (r2 && r2.changes) || 0;
+  console.log(JSON.stringify({ event: 'visitor_deleted', vid, visits: deleted, engagement: engDeleted }));
+  return Response.json({ ok: true, deleted, engagement: engDeleted, visitor: vid }, { headers: h });
 }
 
 // ── POST /api/merge-visitors (session-gated, merge all visits from source → target) ──
