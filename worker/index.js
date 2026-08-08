@@ -1,4 +1,4 @@
-var VERSION = '3.14.0'; // bump when you change the worker code
+var VERSION = '3.15.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -23,6 +23,8 @@ export default {
         response = handleHealth(request, env);
       } else if (path === '/event') {
         response = await handleEvent(request, env);
+      } else if (path === '/api/delete-visit') {
+        response = await handleDeleteVisit(request, env);
       } else if (path === '/meta') {
         response = await handleMeta(request, env);
       } else {
@@ -387,6 +389,34 @@ async function handleEvent(request, env) {
   }
 
   return Response.json({ ok: true }, { headers: base });
+}
+
+// ── DELETE /api/delete-visit (session-gated, admin only) ──
+async function handleDeleteVisit(request, env) {
+  const h = securityHeaders({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
+  if (request.method !== 'DELETE') return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: h });
+
+  // Same session gate as dashboard/stats
+  const session = sessionTokenFrom(request.headers.get('Cookie') || '');
+  if (!session || !(await verifySessionToken(session, env))) {
+    return Response.json({ error: 'unauthorized' }, { status: 401, headers: h });
+  }
+
+  // Parse id from path: /api/delete-visit/:id
+  const url = new URL(request.url);
+  const parts = url.pathname.split('/').filter(Boolean);
+  const id = Number(parts[parts.length - 1]);
+  if (!Number.isFinite(id) || id < 1) {
+    return Response.json({ error: 'bad_id' }, { status: 400, headers: h });
+  }
+
+  const info = await env.DB.prepare('DELETE FROM page_views WHERE id = ?').bind(id).run();
+  if (info && info.changes > 0) {
+    console.log(JSON.stringify({ event: 'visit_deleted', id }));
+    return Response.json({ ok: true, deleted: id }, { headers: h });
+  }
+  return Response.json({ ok: false, reason: 'not_found' }, { status: 404, headers: h });
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1038,14 +1068,16 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     const osParts = [v.os, v.browser].filter(Boolean);
     const deviceLine = v.device_type ? ('<span class="badge" style="font-size:0.68rem">' + esc(v.device_type) + '</span> ') : '';
     const osLine = osParts.length ? deviceLine + esc(osParts.join(' · ')) : (v.user_agent ? parseUA(v.user_agent) : '—');
-    return '<tr><td><div style="font-weight:500">' + formatTime(v.created_at) + '</div><div style="font-size:0.68rem;color:var(--muted)">' + ago + '</div></td>'
+    const id = v.id || '';
+    return '<tr data-id="' + id + '"><td><div style="font-weight:500">' + formatTime(v.created_at) + '</div><div style="font-size:0.68rem;color:var(--muted)">' + ago + '</div></td>'
       + '<td>' + esc(loc) + coordH(v) + ispExtra + '</td>'
       + '<td>' + (v.referrer
         ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 28) + '</a>'
         : 'Direct') + '</td>'
       + '<td style="font-size:0.78rem"><span class="badge">' + esc(v.device_type || 'Unknown') + '</span> ' + esc(osLine) + '</td>'
-      + '<td><span class="badge seattle">' + esc(v.visitor_id.slice(0, 8)) + '</span></td></tr>';
-  }).join('') : '<tr><td colspan="5" class="empty-state">No Seattle visits recorded yet</td></tr>';
+      + '<td><span class="badge seattle">' + esc(v.visitor_id.slice(0, 8)) + '</span></td>'
+      + '<td style="width:36px"><button class="del-btn" data-id="' + id + '" title="Delete" aria-label="Delete">×</button></td></tr>';
+  }).join('') : '<tr><td colspan="6" class="empty-state">No Seattle visits recorded yet</td></tr>';
   const recentRows = visits.map(v => {
     const isSea = v.city === 'Seattle';
     const ago = timeAgo(v.created_at);
@@ -1053,14 +1085,16 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     const os = esc(v.os || '');
     const browser = esc(v.browser || '');
     const dev = esc(v.device_type || '');
-    return '<tr' + (isSea ? ' style="background:rgba(0,113,227,0.04)"' : '') + '>'
+    const id = v.id || '';
+    return '<tr data-id="' + id + '"' + (isSea ? ' style="background:rgba(0,113,227,0.04)"' : '') + '>'
       + '<td><div>' + formatTime(v.created_at) + '</div><div style="font-size:0.7rem;color:var(--muted)">' + ago + '</div></td>'
       + '<td>' + esc(loc) + coordH(v) + (isSea ? ' <span class="badge seattle">SEA</span>' : '') + '</td>'
       + '<td style="font-size:0.78rem">' + (dev ? '<span class="badge">' + dev + '</span> ' : '') + ' ' + esc([os, browser].filter(Boolean).join(' · ') || '—') + '</td>'
       + '<td>' + (v.referrer
         ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 30) + '</a>'
         : 'Direct') + '</td>'
-      + '<td><span class="badge">' + esc(v.visitor_id.slice(0, 8)) + '</span></td></tr>';
+      + '<td><span class="badge">' + esc(v.visitor_id.slice(0, 8)) + '</span></td>'
+      + '<td style="width:36px"><button class="del-btn" data-id="' + id + '" title="Delete this record" aria-label="Delete">×</button></td></tr>';
   }).join('');
   const countryChips = countries.length ? countries.map(c =>
     '<span class="country-chip"><strong>' + c.count + '</strong> ' + flag(c.country) + ' ' + esc(c.country) + '</span>'
@@ -1221,6 +1255,9 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   html[data-theme="dark"] .badge{background:rgba(129,199,132,0.16);color:#81c784}
   .badge.seattle{background:rgba(21,101,192,0.12);color:#1565c0}
   html[data-theme="dark"] .badge.seattle{background:rgba(100,181,246,0.18);color:#64b5f6}
+  .del-btn{background:none;border:none;color:var(--muted);font-size:1.1rem;line-height:1;cursor:pointer;padding:2px 6px;border-radius:6px;opacity:0.4;transition:opacity 0.15s,color 0.15s,background 0.15s}
+  .del-btn:hover{opacity:1;color:#d32f2f;background:rgba(211,47,47,0.1)}
+  html[data-theme="dark"] .del-btn:hover{background:rgba(211,47,47,0.2);color:#ef5350}
   .table-scroll-x{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius)}
   .table-scroll-y{max-height:520px;width:100%;overflow-y:auto;-webkit-overflow-scrolling:touch}
   .table-scroll-y table{box-shadow:none;border-radius:0}
@@ -1383,7 +1420,8 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   var _allRecent=[];
   function rowHtml(v,seattleStyle){
     var isSea=v.city==='Seattle';
-    return '<tr'+(isSea?' style="background:rgba(0,113,227,0.04)"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+(isSea?' <span class="badge seattle">SEA</span>':'')+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';
+    var id=v.id||'';
+    return '<tr data-id="'+id+'"'+(isSea?' style="background:rgba(0,113,227,0.04)"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+(isSea?' <span class="badge seattle">SEA</span>':'')+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH((v.visitor_id||'').slice(0,8))+'</span></td><td style="width:36px"><button class="del-btn" data-id="'+id+'" title="Delete this record" aria-label="Delete">×</button></td></tr>';
   }
   function renderRecent(){
     var rt=document.getElementById('recentTbody');
@@ -1425,7 +1463,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
           sb.innerHTML='<div class="seattle-banner"><h3>Seattle Visits — All Time</h3><p>'+s.total+' total views &middot; '+s.unique+' unique visitors &middot; '+s.last30+' in last 30 days'+(s.firstSeen?' &middot; first seen '+fmtH(s.firstSeen):'')+(s.lastSeen?' &middot; <strong>last seen '+agoH(s.lastSeen)+'</strong>':'')+'</p></div>';}
         var st=document.getElementById('seattleTbody');
         if(st){var sv=d.seattleVisits||[];
-          st.innerHTML=sv.length?sv.map(function(v){return '<tr><td><div style="font-weight:500">'+fmtH(v.created_at)+'</div><div style="font-size:0.68rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+ispH(v)+'</td><td>'+refLinkH(v.referrer,28)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td><span class="badge seattle">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';}).join(''):'<tr><td colspan="5" class="empty-state">No Seattle visits recorded yet</td></tr>';}
+          st.innerHTML=sv.length?sv.map(function(v){var id=v.id||'';return '<tr data-id="'+id+'"><td><div style="font-weight:500">'+fmtH(v.created_at)+'</div><div style="font-size:0.68rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+ispH(v)+'</td><td>'+refLinkH(v.referrer,28)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td><span class="badge seattle">'+escH((v.visitor_id||'').slice(0,8))+'</span></td><td style="width:36px"><button class="del-btn" data-id="'+id+'" title="Delete" aria-label="Delete">×</button></td></tr>';}).join(''):'<tr><td colspan="6" class="empty-state">No Seattle visits recorded yet</td></tr>';}
         _allRecent=d.recent||[];
         renderRecent();
       })
@@ -1436,6 +1474,25 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   setInterval(refresh,60000);
   var si=document.getElementById('recentSearch');
   if(si)si.addEventListener('input',renderRecent);
+
+  // Delete button handler — delegates from tbody, calls DELETE /api/delete-visit/:id
+  document.addEventListener('click',function(e){
+    var btn=e.target.closest('.del-btn');
+    if(!btn)return;
+    var id=btn.getAttribute('data-id');
+    if(!id)return;
+    var row=btn.closest('tr');
+    if(!row)return;
+    if(!confirm('Delete visit #'+id+'? This cannot be undone.'))return;
+    btn.disabled=true;btn.textContent='…';
+    fetch('/api/delete-visit/'+id,{method:'DELETE',credentials:'include'})
+      .then(function(r){return r.json().catch(function(){return{ok:false}});})
+      .then(function(d){
+        if(d&&d.ok){row.style.transition='opacity 0.2s';row.style.opacity='0';setTimeout(function(){row.remove();},200);}
+        else{alert('Delete failed: '+(d&&d.reason||'error'));btn.disabled=false;btn.textContent='×';}
+      })
+      .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='×';});
+  });
 </script>
 </body>
 </html>`;
