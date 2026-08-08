@@ -872,7 +872,7 @@ function loginPage(msg, env) {
       --card-shadow:0 14px 44px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.14),inset 0 0 24px rgba(41,151,255,0.05);
       --sheen:linear-gradient(115deg,rgba(255,255,255,0.16) 0%,rgba(255,255,255,0.03) 28%,transparent 55%,rgba(255,255,255,0.04) 78%,transparent 100%)}
   }
-  body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;transition:background 0.4s,color 0.4s;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow:hidden}
+  body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem;transition:background 0.4s,color 0.4s;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow-x:hidden}
   body::before,body::after{content:'';position:fixed;inset:-30%;z-index:-2;pointer-events:none}
   body::before{
     background:
@@ -891,13 +891,14 @@ function loginPage(msg, env) {
   html[data-theme="dark"] body::after{background:radial-gradient(50% 35% at 50% 0%,rgba(120,160,255,0.14) 0%,transparent 70%);mix-blend-mode:screen}
   @keyframes aurora{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(-3%,2%,0) scale(1.04)}}
   @keyframes aurora-glow{0%{opacity:0.5}100%{opacity:0.95}}
-  @keyframes fadeInUp{from{opacity:0;transform:translateY(26px) scale(0.99)}to{opacity:1;transform:translateY(0) scale(1)}}
+  @keyframes fadeInUp{0%{opacity:0;transform:translateY(12px) scale(0.998)}50%{opacity:1}100%{opacity:1;transform:translateY(0) scale(1)}}
   h1{background:linear-gradient(115deg,var(--text) 35%,var(--muted));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-  .box{background:var(--glass);padding:3rem;border-radius:28px;box-shadow:var(--card-shadow);text-align:center;max-width:400px;width:90%;position:relative;overflow:hidden;border:1px solid var(--border);backdrop-filter:blur(50px) saturate(200%) url(#lg-login);-webkit-backdrop-filter:blur(50px) saturate(200%);animation:fadeInUp 0.6s cubic-bezier(.22,.61,.36,1) both}
+  .box{background:var(--glass);padding:3rem 2.5rem;border-radius:28px;box-shadow:var(--card-shadow);text-align:center;max-width:420px;width:92vw;position:relative;border:1px solid var(--border);backdrop-filter:blur(50px) saturate(200%) url(#lg-login);-webkit-backdrop-filter:blur(50px) saturate(200%);animation:fadeInUp 0.3s cubic-bezier(.22,.61,.36,1) both}
   .box::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(120% 80% at 0% 0%,rgba(255,255,255,0.8) 0%,rgba(255,255,255,0.0) 50%);opacity:0.7}
   .box::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--sheen);mix-blend-mode:screen;z-index:0}
   .box>*{position:relative;z-index:1}
-  .theme-toggle{position:absolute;top:1rem;right:1rem;background:var(--glass);color:var(--muted);border:1px solid var(--border);padding:0.35rem 0.7rem;border-radius:980px;font-size:0.75rem;cursor:pointer;font-family:inherit;font-weight:600;backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 8px rgba(20,24,32,0.05);transition:color 0.2s,border-color 0.2s,box-shadow 0.2s}
+  .box-content{position:relative;z-index:1}
+  .theme-toggle{position:absolute;top:1rem;right:1rem;z-index:2;background:var(--glass);color:var(--muted);border:1px solid var(--border);padding:0.35rem 0.7rem;border-radius:980px;font-size:0.75rem;cursor:pointer;font-family:inherit;font-weight:600;backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 8px rgba(20,24,32,0.05);transition:color 0.2s,border-color 0.2s,box-shadow 0.2s}
   .theme-toggle:hover{color:var(--accent);border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.8)}
   input{width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:16px;font-size:16px;margin:1rem 0;font-family:inherit;background:rgba(255,255,255,0.5);color:var(--text);font-weight:500;transition:border-color 0.2s,box-shadow 0.2s;outline:none;backdrop-filter:blur(30px) saturate(200%);-webkit-backdrop-filter:blur(30px) saturate(200%);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 8px rgba(20,24,32,0.05)}
   html[data-theme="dark"] input{background:rgba(40,44,55,0.5)}
@@ -1183,8 +1184,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   @media(max-width:768px){.grid-2{grid-template-columns:1fr}}
   .card{position:relative;overflow:hidden;background:var(--glass-bg);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--glass-shadow);
     margin-bottom:1.5rem;border:1px solid var(--border);
-    backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%);
-    animation:fadeInUp 0.3s cubic-bezier(.22,.61,.36,1) both}
+    backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%)}
   .card::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.7}
   .card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
   html[data-theme="dark"] .card{background:var(--glass-bg)}
