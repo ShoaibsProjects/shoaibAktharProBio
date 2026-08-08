@@ -1145,7 +1145,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   @keyframes aurora-glow{0%{opacity:0.5;transform:translate3d(0,0,0)}100%{opacity:0.9;transform:translate3d(2%,-2%,0)}}
   @keyframes aurora-2{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(2%,-3%,0) scale(1.06)}}
   @keyframes glass-morph{0%{border-radius:var(--radius)}50%{border-radius:calc(var(--radius) + 4px)}100%{border-radius:var(--radius)}}
-  @keyframes fadeInUp{0%{opacity:0;transform:translateY(10px) scale(0.998)}40%{opacity:1}100%{opacity:1;transform:translateY(0) scale(1)}}
+  @keyframes fadeInUp{0%{opacity:0;transform:translateY(8px) scale(0.998)}50%{opacity:1}100%{opacity:1;transform:translateY(0) scale(1)}}
   .stat-card>*,.card>*,.top-bar>*{position:relative;z-index:1}
   .stat-card::after,.card::after,.top-bar::after{z-index:0}
   .container{max-width:1000px;margin:0 auto}
@@ -1169,7 +1169,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   .stat-card{position:relative;overflow:hidden;background:var(--glass-bg);padding:1.4rem 1.5rem;border-radius:var(--radius);
     box-shadow:var(--glass-shadow);border:1px solid var(--border);
     backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%);
-    transition:transform 0.3s cubic-bezier(.22,.61,.36,1),box-shadow 0.3s;    animation:fadeInUp 0.5s cubic-bezier(.22,.61,.36,1) both}
+    transition:transform 0.3s cubic-bezier(.22,.61,.36,1),box-shadow 0.3s;    animation:fadeInUp 0.3s cubic-bezier(.22,.61,.36,1) both}
   .stat-card::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.7}
   .stat-card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
   .stat-card:hover{transform:translateY(-4px);box-shadow:0 28px 70px -12px rgba(0,80,180,0.22),0 6px 20px -6px rgba(20,24,32,0.1),inset 0 1px 0 rgba(255,255,255,0.9)}
@@ -1184,9 +1184,10 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   .card{position:relative;overflow:hidden;background:var(--glass-bg);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--glass-shadow);
     margin-bottom:1.5rem;border:1px solid var(--border);
     backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%);
-    animation:fadeInUp 0.6s cubic-bezier(.22,.61,.36,1) both}
+    animation:fadeInUp 0.3s cubic-bezier(.22,.61,.36,1) both}
   .card::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.7}
   .card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
+  html[data-theme="dark"] .card{background:var(--glass-bg)}
   h2{font-size:1.05rem;font-weight:700;margin-bottom:1rem;letter-spacing:-0.012em}
   .card-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap}
   .card-head h2{margin-bottom:0}
