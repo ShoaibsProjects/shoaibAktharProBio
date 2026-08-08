@@ -1,4 +1,4 @@
-var VERSION = '3.12.0'; // bump when you change the worker code
+var VERSION = '3.13.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -1062,69 +1062,95 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E📊%3C/text%3E%3C/svg%3E">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'">
+<svg style="position:fixed;width:0;height:0" aria-hidden="true"><defs>
+<filter id="lg-refract" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+<feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="7" result="noise"/>
+<feDisplacementMap in="SourceGraphic" in2="noise" scale="14" xChannelSelector="R" yChannelSelector="G"/>
+<feGaussianBlur stdDeviation="0.6"/>
+</filter>
+<filter id="lg-refract-strong" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+<feTurbulence type="fractalNoise" baseFrequency="0.006 0.01" numOctaves="3" seed="21" result="noise"/>
+<feDisplacementMap in="SourceGraphic" in2="noise" scale="22" xChannelSelector="R" yChannelSelector="G"/>
+<feGaussianBlur stdDeviation="0.8"/>
+</filter>
+</defs></svg>
 <style>
   *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-  :root{--bg:#eef0f6;--surface:rgba(255,255,255,0.52);--surface-deep:rgba(255,255,255,0.66);--text:#1d1d1f;--muted:#6e6e73;--dim:#1d1d1f;
-    --border:rgba(255,255,255,0.5);--border-soft:rgba(20,24,32,0.08);--accent:#0071e3;--accent-soft:rgba(0,113,227,0.10);
-    --glass:linear-gradient(135deg,rgba(255,255,255,0.72),rgba(255,255,255,0.28));
-    --chip-shadow:0 2px 10px rgba(20,24,32,0.06);
-    --card-shadow:0 8px 32px rgba(0,113,227,0.10),0 2px 8px rgba(20,24,32,0.04),inset 0 1px 0 rgba(255,255,255,0.75);
-    --header-bg:linear-gradient(135deg,rgba(255,255,255,0.66),rgba(255,255,255,0.28));
-    --sheen:linear-gradient(115deg,rgba(255,255,255,0.55) 0%,rgba(255,255,255,0.10) 28%,transparent 55%,rgba(255,255,255,0.12) 78%,transparent 100%);
+  :root{--bg:#eef0f6;--text:#1d1d1f;--muted:#6e6e73;--dim:#1d1d1f;
+    --border:rgba(255,255,255,0.55);--border-soft:rgba(20,24,32,0.07);
+    --accent:#0071e3;--accent-soft:rgba(0,113,227,0.10);
+    --glass-bg:linear-gradient(150deg,rgba(255,255,255,0.85) 0%,rgba(255,255,255,0.45) 45%,rgba(255,255,255,0.18) 100%);
+    --glass-edge:linear-gradient(160deg,rgba(255,255,255,0.95) 0%,rgba(255,255,255,0.0) 30%,rgba(255,255,255,0.0) 75%,rgba(255,255,255,0.55) 100%);
+    --glass-inner:radial-gradient(120% 80% at 0% 0%,rgba(255,255,255,0.8) 0%,rgba(255,255,255,0.0) 50%);
+    --glass-shadow:0 22px 70px -10px rgba(0,80,180,0.18),0 4px 16px -4px rgba(20,24,32,0.08),inset 0 1px 0 rgba(255,255,255,0.85),inset 0 -1px 0 rgba(255,255,255,0.25),inset 0 0 1px 1px rgba(255,255,255,0.4);
+    --pill-shadow:0 2px 8px rgba(20,24,32,0.06),inset 0 1px 0 rgba(255,255,255,0.8),inset 0 -1px 0 rgba(0,0,0,0.04);
+    --specular:linear-gradient(115deg,rgba(255,255,255,0.7) 0%,rgba(255,255,255,0.12) 18%,transparent 40%,rgba(255,255,255,0.0) 60%,rgba(255,255,255,0.18) 82%,rgba(255,255,255,0.0) 100%);
     --accent-shadow:0 8px 24px rgba(0,113,227,0.20);
-    --radius:26px;--radius-md:20px;--radius-sm:14px}
-  html[data-theme="dark"]{--bg:#0e1015;--surface:rgba(28,31,38,0.52);--surface-deep:rgba(34,38,46,0.66);--text:#f5f5f7;--muted:#a1a1a6;
-    --dim:#e5e5ea;--border:rgba(255,255,255,0.14);--border-soft:rgba(255,255,255,0.09);--accent:#2997ff;--accent-soft:rgba(41,151,255,0.16);
-    --glass:linear-gradient(135deg,rgba(58,68,92,0.42),rgba(28,31,38,0.26));
-    --chip-shadow:0 2px 10px rgba(0,0,0,0.4);
-    --card-shadow:0 14px 40px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.14),inset 0 0 24px rgba(41,151,255,0.05);
-    --header-bg:linear-gradient(135deg,rgba(58,68,92,0.40),rgba(28,31,38,0.26));
-    --sheen:linear-gradient(115deg,rgba(255,255,255,0.16) 0%,rgba(255,255,255,0.03) 28%,transparent 55%,rgba(255,255,255,0.04) 78%,transparent 100%);
-    --accent-shadow:0 8px 24px rgba(41,151,255,0.20)}
-  body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif;
+    --radius:28px;--radius-md:22px;--radius-sm:16px}
+  html[data-theme="dark"]{--bg:#0c0e14;--text:#f5f5f7;--muted:#a1a1a6;--dim:#e5e5ea;
+    --border:rgba(255,255,255,0.16);--border-soft:rgba(255,255,255,0.08);--accent:#2997ff;--accent-soft:rgba(41,151,255,0.18);
+    --glass-bg:linear-gradient(150deg,rgba(70,80,110,0.5) 0%,rgba(30,34,44,0.35) 50%,rgba(20,22,30,0.2) 100%);
+    --glass-edge:linear-gradient(160deg,rgba(180,200,255,0.25) 0%,rgba(255,255,255,0.0) 35%,rgba(255,255,255,0.0) 70%,rgba(180,200,255,0.18) 100%);
+    --glass-inner:radial-gradient(120% 80% at 0% 0%,rgba(160,180,255,0.25) 0%,rgba(255,255,255,0.0) 55%);
+    --glass-shadow:0 22px 70px -10px rgba(0,0,0,0.55),0 4px 16px -4px rgba(0,0,0,0.3),inset 0 1px 0 rgba(255,255,255,0.16),inset 0 -1px 0 rgba(0,0,0,0.4),inset 0 0 1px 1px rgba(255,255,255,0.08);
+    --pill-shadow:0 2px 8px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.16),inset 0 -1px 0 rgba(0,0,0,0.4);
+    --specular:linear-gradient(115deg,rgba(255,255,255,0.22) 0%,rgba(255,255,255,0.04) 18%,transparent 40%,transparent 60%,rgba(255,255,255,0.06) 82%,transparent 100%);
+    --accent-shadow:0 8px 24px rgba(41,151,255,0.25)}
+  body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',system-ui,sans-serif;
     background:var(--bg);color:var(--text);padding:2rem 1.25rem;min-height:100vh;
-    transition:background 0.3s,color 0.3s;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-  body::before{content:'';position:fixed;inset:-20%;z-index:-1;
+    transition:background 0.4s,color 0.4s;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+  body::before,body::after{content:'';position:fixed;inset:-30%;z-index:-2;pointer-events:none}
+  body::before{
     background:
-      radial-gradient(900px 620px at 12% 4%,#d8e9ff 0%,transparent 55%),
-      radial-gradient(820px 560px at 92% 8%,#e5dbff 0%,transparent 52%),
-      radial-gradient(980px 700px at 55% 100%,#d3f3e2 0%,transparent 55%),
-      var(--bg);
-    animation:aurora 26s ease-in-out infinite alternate}
+      radial-gradient(800px 600px at 8% 2%,#cfe3ff 0%,transparent 50%),
+      radial-gradient(900px 650px at 90% 5%,#e8dcff 0%,transparent 48%),
+      radial-gradient(1000px 700px at 50% 95%,#d6f5e3 0%,transparent 50%),
+      radial-gradient(700px 500px at 30% 60%,#ffe0f0 0%,transparent 45%),
+      linear-gradient(160deg,#eef2fb 0%,#e8ecf6 100%);
+    animation:aurora 28s ease-in-out infinite alternate}
+  body::after{
+    background:radial-gradient(60% 40% at 50% 0%,rgba(255,255,255,0.6) 0%,transparent 70%);
+    animation:aurora-glow 18s ease-in-out infinite alternate;mix-blend-mode:overlay}
   html[data-theme="dark"] body::before{
     background:
-      radial-gradient(900px 620px at 12% 4%,rgba(41,151,255,0.22) 0%,transparent 55%),
-      radial-gradient(820px 560px at 92% 8%,rgba(124,92,255,0.24) 0%,transparent 52%),
-      radial-gradient(980px 700px at 55% 100%,rgba(48,209,88,0.10) 0%,transparent 55%),
-      var(--bg)}
-  @keyframes aurora{0%{transform:translate3d(0,0,0)}100%{transform:translate3d(-3%,2%,0)}}
+      radial-gradient(800px 600px at 8% 2%,rgba(30,90,180,0.28) 0%,transparent 50%),
+      radial-gradient(900px 650px at 90% 5%,rgba(90,50,180,0.3) 0%,transparent 48%),
+      radial-gradient(1000px 700px at 50% 95%,rgba(20,120,70,0.2) 0%,transparent 50%),
+      radial-gradient(700px 500px at 30% 60%,rgba(150,30,90,0.18) 0%,transparent 45%),
+      linear-gradient(160deg,#0c0f18 0%,#0e111a 100%)}
+  html[data-theme="dark"] body::after{background:radial-gradient(60% 40% at 50% 0%,rgba(120,160,255,0.12) 0%,transparent 70%);mix-blend-mode:screen}
+  @keyframes aurora{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(-3%,2%,0) scale(1.04)}}
+  @keyframes aurora-glow{0%{opacity:0.5;transform:translate3d(0,0,0)}100%{opacity:0.9;transform:translate3d(2%,-2%,0)}}
+  @keyframes glass-morph{0%{border-radius:var(--radius)}50%{border-radius:calc(var(--radius) + 4px)}100%{border-radius:var(--radius)}}
   @keyframes fadeInUp{from{opacity:0;transform:translateY(26px) scale(0.99)}to{opacity:1;transform:translateY(0) scale(1)}}
   .stat-card>*,.card>*,.top-bar>*{position:relative;z-index:1}
   .stat-card::after,.card::after,.top-bar::after{z-index:0}
   .container{max-width:1000px;margin:0 auto}
   .top-bar{position:sticky;top:0.75rem;z-index:20;display:flex;justify-content:space-between;align-items:center;
     flex-wrap:wrap;gap:1rem;padding:1.15rem 1.5rem;margin-bottom:1.75rem;border-radius:var(--radius);overflow:hidden;
-    background:var(--header-bg);backdrop-filter:blur(40px) saturate(190%);-webkit-backdrop-filter:blur(40px) saturate(190%);
-    border:1px solid var(--border);box-shadow:var(--card-shadow)}
-  .top-bar::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--sheen);mix-blend-mode:screen}
+    background:var(--glass-bg);backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%);
+    border:1px solid var(--border);box-shadow:var(--glass-shadow)}
+  .top-bar::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
+  .top-bar::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.6}
   h1{font-size:2rem;font-weight:700;letter-spacing:-0.025em;line-height:1.1;
     background:linear-gradient(115deg,var(--text) 35%,var(--muted));
     -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
   .subtitle{color:var(--muted);margin-top:0.3rem;font-size:0.9rem}
   .top-actions{display:flex;align-items:center;gap:0.5rem}
-  .theme-toggle,.logout{background:var(--glass);color:var(--text);font-size:0.8rem;text-decoration:none;
+  .theme-toggle,.logout{background:var(--glass-bg);color:var(--text);font-size:0.8rem;text-decoration:none;
     padding:0.45rem 1.1rem;border-radius:980px;border:1px solid var(--border);cursor:pointer;font-family:inherit;
     font-weight:600;letter-spacing:0.01em;transition:transform 0.25s cubic-bezier(.22,.61,.36,1),color 0.2s,border-color 0.2s,box-shadow 0.2s;
-    box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 10px rgba(20,24,32,0.06);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%)}
-  .theme-toggle:hover,.logout:hover{color:var(--accent);border-color:var(--accent);transform:translateY(-1px);box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.8)}
+    box-shadow:var(--pill-shadow);backdrop-filter:blur(30px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(30px) saturate(200%)}
+  .theme-toggle:hover,.logout:hover{color:var(--accent);border-color:var(--accent);transform:translateY(-1px);box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.9)}
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1.5rem}
-  .stat-card{position:relative;overflow:hidden;background:var(--glass);padding:1.4rem 1.5rem;border-radius:var(--radius);
-    box-shadow:var(--card-shadow);border:1px solid var(--border);
-    backdrop-filter:blur(40px) saturate(190%);-webkit-backdrop-filter:blur(40px) saturate(190%);
+  .stat-card{position:relative;overflow:hidden;background:var(--glass-bg);padding:1.4rem 1.5rem;border-radius:var(--radius);
+    box-shadow:var(--glass-shadow);border:1px solid var(--border);
+    backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%);
     transition:transform 0.3s cubic-bezier(.22,.61,.36,1),box-shadow 0.3s;animation:fadeInUp 0.6s cubic-bezier(.22,.61,.36,1) both}
-  .stat-card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--sheen);mix-blend-mode:screen}
-  .stat-card:hover{transform:translateY(-4px);box-shadow:0 20px 48px rgba(0,113,227,0.16),0 4px 12px rgba(20,24,32,0.06),inset 0 1px 0 rgba(255,255,255,0.8)}
-  html[data-theme="dark"] .stat-card:hover{box-shadow:0 20px 52px rgba(0,0,0,0.6),0 0 24px rgba(41,151,255,0.12),inset 0 1px 0 rgba(255,255,255,0.16)}
+  .stat-card::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.7}
+  .stat-card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
+  .stat-card:hover{transform:translateY(-4px);box-shadow:0 28px 70px -12px rgba(0,80,180,0.22),0 6px 20px -6px rgba(20,24,32,0.1),inset 0 1px 0 rgba(255,255,255,0.9)}
+  html[data-theme="dark"] .stat-card:hover{box-shadow:0 28px 70px -10px rgba(0,0,0,0.6),inset 0 0 20px rgba(41,151,255,0.08),inset 0 1px 0 rgba(255,255,255,0.18)}
   .stat-icon{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;
     background:var(--accent-soft);color:var(--accent);margin-bottom:0.9rem}
   .stat-icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -1132,11 +1158,12 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   .stat-label{font-size:0.7rem;color:var(--dim);text-transform:uppercase;letter-spacing:0.08em;margin-top:0.3rem;font-weight:700}
   .grid-2{display:grid;grid-template-columns:1.4fr 1fr;gap:1rem;margin-bottom:1.5rem}
   @media(max-width:768px){.grid-2{grid-template-columns:1fr}}
-  .card{position:relative;overflow:hidden;background:var(--glass);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--card-shadow);
+  .card{position:relative;overflow:hidden;background:var(--glass-bg);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--glass-shadow);
     margin-bottom:1.5rem;border:1px solid var(--border);
-    backdrop-filter:blur(40px) saturate(190%);-webkit-backdrop-filter:blur(40px) saturate(190%);
+    backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%);
     animation:fadeInUp 0.6s cubic-bezier(.22,.61,.36,1) both}
-  .card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--sheen);mix-blend-mode:screen}
+  .card::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.7}
+  .card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
   h2{font-size:1.05rem;font-weight:700;margin-bottom:1rem;letter-spacing:-0.012em}
   .card-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap}
   .card-head h2{margin-bottom:0}
@@ -1153,11 +1180,11 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   .ref-fill{height:100%;background:linear-gradient(90deg,var(--accent),#5ac8fa);border-radius:3px;transition:width 0.4s ease}
   .ref-count{font-size:0.8rem;color:var(--muted);font-weight:700;min-width:2.5rem;text-align:right;font-variant-numeric:tabular-nums}
   .country-list{display:flex;flex-wrap:wrap;gap:0.5rem}
-  .country-chip{background:var(--glass);padding:0.5rem 1rem;border-radius:20px;font-size:0.85rem;box-shadow:var(--chip-shadow),inset 0 1px 0 rgba(255,255,255,0.7);
-    border:1px solid var(--border);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);font-weight:500}
+  .country-chip{background:var(--glass-bg);padding:0.5rem 1rem;border-radius:20px;font-size:0.85rem;box-shadow:var(--pill-shadow);
+    border:1px solid var(--border);backdrop-filter:blur(30px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(30px) saturate(200%);font-weight:500}
   .country-chip strong{color:var(--accent);font-weight:700}
-  .table-wrap{background:var(--glass);border-radius:var(--radius);overflow:hidden;box-shadow:var(--card-shadow);border:1px solid var(--border);
-    backdrop-filter:blur(40px) saturate(190%);-webkit-backdrop-filter:blur(40px) saturate(190%)}
+  .table-wrap{background:var(--glass-bg);border-radius:var(--radius);overflow:hidden;box-shadow:var(--glass-shadow);border:1px solid var(--border);
+    backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%)}
   table{width:100%;border-collapse:collapse;border-radius:var(--radius)}
   th,td{padding:11px 14px;text-align:left;font-size:0.82rem;white-space:nowrap;letter-spacing:0.01em}
   th{background:rgba(0,113,227,0.06);font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:0.05em;font-size:0.68rem}
@@ -1179,22 +1206,22 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   .auto-refresh{display:flex;align-items:center;gap:0.4rem;font-size:0.75rem;color:var(--muted);margin-top:1.5rem;text-align:center;justify-content:center}
   .dot{width:8px;height:8px;border-radius:50%;background:#34c759;display:inline-block;animation:pulse 2s infinite;box-shadow:0 0 0 4px rgba(52,199,89,0.15)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
-  .seattle-banner{position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(0,113,227,0.10),rgba(90,200,250,0.06));color:var(--accent);padding:1.25rem 1.5rem;border-radius:var(--radius-md);margin-bottom:1rem;
-    border:1px solid var(--border);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);
+  .seattle-banner{position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(0,113,227,0.12),rgba(90,200,250,0.08));color:var(--accent);padding:1.25rem 1.5rem;border-radius:var(--radius-md);margin-bottom:1rem;
+    border:1px solid var(--border);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);
     box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 12px rgba(0,113,227,0.08)}
-  .seattle-banner::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--sheen);mix-blend-mode:screen}
-  html[data-theme="dark"] .seattle-banner{background:linear-gradient(135deg,rgba(41,151,255,0.14),rgba(100,181,246,0.08));color:#64b5f6;
-    box-shadow:inset 0 1px 0 rgba(255,255,255,0.16),0 2px 12px rgba(41,151,255,0.10)}
+  .seattle-banner::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
+  html[data-theme="dark"] .seattle-banner{background:linear-gradient(135deg,rgba(41,151,255,0.16),rgba(100,181,246,0.10));color:#64b5f6;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,0.18),0 2px 12px rgba(41,151,255,0.12)}
   .seattle-banner h3{font-size:1.1rem;font-weight:700;margin-bottom:0.25rem;position:relative;z-index:1}
   .seattle-banner p{font-size:0.8rem;font-weight:500;opacity:0.9;position:relative;z-index:1}
   .seattle-banner::after{z-index:0}
   .search-wrap{position:relative;min-width:220px}
   .search-wrap input{width:100%;padding:0.5rem 0.9rem 0.5rem 2rem;border:1px solid var(--border);border-radius:var(--radius-sm);
-    background:rgba(255,255,255,0.55);color:var(--text);font-size:0.82rem;font-family:inherit;font-weight:500;outline:none;
+    background:var(--glass-bg);color:var(--text);font-size:0.82rem;font-family:inherit;font-weight:500;outline:none;
     transition:border-color 0.2s,box-shadow 0.2s;
-    backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);
+    backdrop-filter:blur(30px) saturate(200%);-webkit-backdrop-filter:blur(30px) saturate(200%);
     box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 8px rgba(20,24,32,0.05)}
-  html[data-theme="dark"] .search-wrap input{background:rgba(40,44,55,0.55)}
+  html[data-theme="dark"] .search-wrap input{background:var(--glass-bg)}
   .search-wrap input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.7)}
   .search-wrap input::placeholder{color:var(--muted)}
   .search-icon{position:absolute;left:0.65rem;top:50%;transform:translateY(-50%);width:14px;height:14px;
@@ -1208,6 +1235,12 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
 </style>
 </head>
 <body>
+<svg style="position:fixed;top:0;left:0;width:0;height:0;overflow:hidden" aria-hidden="true"><defs>
+<filter id="lg-refract-body" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+<feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="7" result="noise"/>
+<feDisplacementMap in="SourceGraphic" in2="noise" scale="10" xChannelSelector="R" yChannelSelector="G"/>
+</filter>
+</defs></svg>
 <div class="container">
   <div class="top-bar">
     <div>
