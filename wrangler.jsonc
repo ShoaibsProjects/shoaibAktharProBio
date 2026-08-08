@@ -20,7 +20,6 @@
 
   "vars": {
     "PAGE_URL": "https://shoaibakthar.pro",
-    "LOG_KEY": "pv_8a7b3c9d2e1f4a6b8c0d2e4f6a8b0c2d",
     "ALLOWED_ORIGINS": "https://shoaibsprojects.github.io,https://shoaibakthar.pro,http://localhost"
   },
 
