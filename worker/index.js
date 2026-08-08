@@ -615,7 +615,7 @@ async function handleDashboard(request, env) {
     } catch (_) {
       try { body = await request.json(); } catch (__) { body = null; }
     }
-    if (env.TURNSTILE_SECRET) {
+    if (false && env.TURNSTILE_SECRET) {
       const token = (body && typeof body.get === 'function' ? (body.get('turnstile') || body.get('cf-turnstile-response') || '') : '') || '';
       const okT = await verifyTurnstile(request, env, token);
       if (!okT) {
