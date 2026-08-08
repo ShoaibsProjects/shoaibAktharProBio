@@ -1,4 +1,4 @@
-var VERSION = '3.16.3'; // bump when you change the worker code
+var VERSION = '3.16.4'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -23,10 +23,6 @@ export default {
         response = handleHealth(request, env);
       } else if (path === '/event') {
         response = await handleEvent(request, env);
-      } else if (path.startsWith('/api/delete-visit/')) {
-        response = await handleDeleteVisit(request, env);
-      } else if (path.startsWith('/api/delete-visitor/')) {
-        response = await handleDeleteVisitor(request, env);
       } else if (path === '/api/merge-visitors') {
         response = await handleMergeVisitors(request, env);
       } else if (path === '/meta') {
@@ -393,60 +389,6 @@ async function handleEvent(request, env) {
   }
 
   return Response.json({ ok: true }, { headers: base });
-}
-
-// ── DELETE /api/delete-visit (session-gated, admin only) ──
-async function handleDeleteVisit(request, env) {
-  const h = securityHeaders({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
-  if (request.method !== 'DELETE') return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: h });
-
-  // Same session gate as dashboard/stats
-  const session = sessionTokenFrom(request.headers.get('Cookie') || '');
-  if (!session || !(await verifySessionToken(session, env))) {
-    return Response.json({ error: 'unauthorized' }, { status: 401, headers: h });
-  }
-
-  // Parse id from path: /api/delete-visit/:id
-  const url = new URL(request.url);
-  const parts = url.pathname.split('/').filter(Boolean);
-  const id = Number(parts[parts.length - 1]);
-  if (!Number.isFinite(id) || id < 1) {
-    return Response.json({ error: 'bad_id' }, { status: 400, headers: h });
-  }
-
-  const info = await env.DB.prepare('DELETE FROM page_views WHERE id = ?').bind(id).run();
-  if (info && info.changes > 0) {
-    console.log(JSON.stringify({ event: 'visit_deleted', id }));
-    return Response.json({ ok: true, deleted: id }, { headers: h });
-  }
-  return Response.json({ ok: false, reason: 'not_found' }, { status: 404, headers: h });
-}
-
-// ── DELETE /api/delete-visitor/:vid (session-gated, delete ALL visits for a visitor) ──
-async function handleDeleteVisitor(request, env) {
-  const h = securityHeaders({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
-  if (request.method !== 'DELETE') return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: h });
-
-  const session = sessionTokenFrom(request.headers.get('Cookie') || '');
-  if (!session || !(await verifySessionToken(session, env))) {
-    return Response.json({ error: 'unauthorized' }, { status: 401, headers: h });
-  }
-
-  const url = new URL(request.url);
-  const parts = url.pathname.split('/').filter(Boolean);
-  const vid = String(parts[parts.length - 1] || '');
-  if (!vid) return Response.json({ error: 'bad_visitor' }, { status: 400, headers: h });
-
-  const [r1, r2] = await Promise.all([
-    env.DB.prepare('DELETE FROM page_views WHERE visitor_id = ?').bind(vid).run(),
-    env.DB.prepare('DELETE FROM page_engagement WHERE visitor_id = ?').bind(vid).run(),
-  ]);
-  const deleted = (r1 && r1.changes) || 0;
-  const engDeleted = (r2 && r2.changes) || 0;
-  console.log(JSON.stringify({ event: 'visitor_deleted', vid, visits: deleted, engagement: engDeleted }));
-  return Response.json({ ok: true, deleted, engagement: engDeleted, visitor: vid }, { headers: h });
 }
 
 // ── POST /api/merge-visitors (session-gated, merge all visits from source → target) ──
@@ -1191,9 +1133,8 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
         ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 28) + '</a>'
         : 'Direct') + '</td>'
       + '<td style="font-size:0.78rem"><span class="badge">' + esc(v.device_type || 'Unknown') + '</span> ' + esc(osLine) + '</td>'
-      + '<td><span class="badge seattle">' + esc(v.visitor_id.slice(0, 8)) + '</span></td>'
-      + '<td style="width:36px"><button class="del-btn" data-id="' + id + '" title="Delete" aria-label="Delete">×</button></td></tr>';
-  }).join('') : '<tr><td colspan="6" class="empty-state">No Seattle visits recorded yet</td></tr>';
+      + '<td><span class="badge seattle">' + esc(v.visitor_id.slice(0, 8)) + '</span></td></tr>';
+  }).join('') : '<tr><td colspan="5" class="empty-state">No Seattle visits recorded yet</td></tr>';
   const recentRows = visits.map(v => {
     const isSea = v.city === 'Seattle';
     const ago = timeAgo(v.created_at);
@@ -1209,8 +1150,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
       + '<td>' + (v.referrer
         ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 30) + '</a>'
         : 'Direct') + '</td>'
-      + '<td><span class="badge">' + esc(v.visitor_id.slice(0, 8)) + '</span></td>'
-      + '<td style="width:36px"><button class="del-btn" data-id="' + id + '" title="Delete this record" aria-label="Delete">×</button></td></tr>';
+      + '<td><span class="badge">' + esc(v.visitor_id.slice(0, 8)) + '</span></td></tr>';
   }).join('');
   const countryChips = countries.length ? countries.map(c =>
     '<span class="country-chip"><strong>' + c.count + '</strong> ' + flag(c.country) + ' ' + esc(c.country) + '</span>'
@@ -1371,9 +1311,6 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   html[data-theme="dark"] .badge{background:rgba(129,199,132,0.16);color:#81c784}
   .badge.seattle{background:rgba(21,101,192,0.12);color:#1565c0}
   html[data-theme="dark"] .badge.seattle{background:rgba(100,181,246,0.18);color:#64b5f6}
-  .del-btn{background:none;border:none;color:var(--muted);font-size:1.1rem;line-height:1;cursor:pointer;padding:2px 6px;border-radius:6px;opacity:0.4;transition:opacity 0.15s,color 0.15s,background 0.15s}
-  .del-btn:hover{opacity:1;color:#d32f2f;background:rgba(211,47,47,0.1)}
-  html[data-theme="dark"] .del-btn:hover{background:rgba(211,47,47,0.2);color:#ef5350}
   .profile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem;margin-top:0.5rem}
   .profile-card{position:relative;background:linear-gradient(150deg,rgba(255,255,255,0.6),rgba(255,255,255,0.25));border:1px solid var(--border);border-radius:var(--radius-md);padding:1.1rem;box-shadow:inset 0 1px 0 rgba(255,255,255,0.6);transition:transform 0.2s,box-shadow 0.2s}
   .profile-card:hover{transform:translateY(-2px);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 8px 24px rgba(0,80,180,0.12)}
@@ -1389,11 +1326,10 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   .profile-loc{font-size:0.78rem;color:var(--accent);margin-bottom:0.4rem}
   .profile-meta{font-size:0.7rem;color:var(--muted);line-height:1.4}
   .profile-actions{display:flex;gap:0.4rem;margin-top:0.7rem}
-  .profile-merge,.profile-del{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
+  .profile-merge{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
   .profile-merge:hover{border-color:var(--accent);color:var(--accent);background:rgba(0,113,227,0.08)}
-  .profile-del:hover{border-color:#d32f2f;color:#d32f2f;background:rgba(211,47,47,0.08)}
   html[data-theme="dark"] .profile-card{background:linear-gradient(150deg,rgba(50,58,78,0.5),rgba(28,31,38,0.35))}
-  html[data-theme="dark"] .profile-merge,html[data-theme="dark"] .profile-del{background:rgba(255,255,255,0.06)}
+  html[data-theme="dark"] .profile-merge{background:rgba(255,255,255,0.06)}
   html[data-theme="dark"] .prob-high{background:rgba(76,175,80,0.2);color:#81c784}
   html[data-theme="dark"] .prob-med{background:rgba(255,152,0,0.2);color:#ffb74d}
   html[data-theme="dark"] .prob-low{background:rgba(158,158,158,0.2);color:#bdbdbd}
@@ -1467,7 +1403,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     var uaShort = p.uas && p.uas[0] ? (p.uas[0].indexOf('iPhone')>=0 ? 'iPhone' : p.uas[0].indexOf('Macintosh')>=0 ? 'Mac' : p.uas[0].indexOf('Android')>=0 ? 'Android' : 'Browser') : '?';
     var citiesStr = p.cities.slice(0,4).join(', ') + (p.cities.length>4 ? ' +'+(p.cities.length-4) : '');
     var prob = p.visits > 3 ? 'high' : p.visits > 1 ? 'med' : 'low';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-id" data-orig="'+esc(p.id.slice(0,10))+'">'+esc(p.id.slice(0,10))+'</span><span class="prob prob-'+prob+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits</div><div class="profile-loc">'+esc(citiesStr)+'</div><div class="profile-meta">'+esc(uaShort)+' · '+esc(p.countries.slice(0,2).join(', ')||'?')+'<br><span style="font-size:0.68rem">'+timeAgo(p.firstSeen)+' → '+timeAgo(p.lastSeen)+'</span></div><div class="profile-actions"><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button><button class="profile-del" data-vid="'+esc(p.id)+'" title="Delete all visits for this visitor">delete</button></div></div>';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-id" data-orig="'+esc(p.id.slice(0,10))+'">'+esc(p.id.slice(0,10))+'</span><span class="prob prob-'+prob+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits</div><div class="profile-loc">'+esc(citiesStr)+'</div><div class="profile-meta">'+esc(uaShort)+' · '+esc(p.countries.slice(0,2).join(', ')||'?')+'<br><span style="font-size:0.68rem">'+timeAgo(p.firstSeen)+' → '+timeAgo(p.lastSeen)+'</span></div><div class="profile-actions"><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
   }).join('') + '</div></div>' : ''}
 
   <div class="grid-2">
@@ -1568,7 +1504,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   function rowHtml(v,seattleStyle){
     var isSea=v.city==='Seattle';
     var id=v.id||'';
-    return '<tr data-id="'+id+'"'+(isSea?' style="background:rgba(0,113,227,0.04)"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+(isSea?' <span class="badge seattle">SEA</span>':'')+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH((v.visitor_id||'').slice(0,8))+'</span></td><td style="width:36px"><button class="del-btn" data-id="'+id+'" title="Delete this record" aria-label="Delete">×</button></td></tr>';
+    return '<tr data-id="'+id+'"'+(isSea?' style="background:rgba(0,113,227,0.04)"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+(isSea?' <span class="badge seattle">SEA</span>':'')+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';
   }
   function renderRecent(){
     var rt=document.getElementById('recentTbody');
@@ -1610,7 +1546,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
           sb.innerHTML='<div class="seattle-banner"><h3>Seattle Visits — All Time</h3><p>'+s.total+' total views &middot; '+s.unique+' unique visitors &middot; '+s.last30+' in last 30 days'+(s.firstSeen?' &middot; first seen '+fmtH(s.firstSeen):'')+(s.lastSeen?' &middot; <strong>last seen '+agoH(s.lastSeen)+'</strong>':'')+'</p></div>';}
         var st=document.getElementById('seattleTbody');
         if(st){var sv=d.seattleVisits||[];
-          st.innerHTML=sv.length?sv.map(function(v){var id=v.id||'';return '<tr data-id="'+id+'"><td><div style="font-weight:500">'+fmtH(v.created_at)+'</div><div style="font-size:0.68rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+ispH(v)+'</td><td>'+refLinkH(v.referrer,28)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td><span class="badge seattle">'+escH((v.visitor_id||'').slice(0,8))+'</span></td><td style="width:36px"><button class="del-btn" data-id="'+id+'" title="Delete" aria-label="Delete">×</button></td></tr>';}).join(''):'<tr><td colspan="6" class="empty-state">No Seattle visits recorded yet</td></tr>';}
+          st.innerHTML=sv.length?sv.map(function(v){var id=v.id||'';return '<tr data-id="'+id+'"><td><div style="font-weight:500">'+fmtH(v.created_at)+'</div><div style="font-size:0.68rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+ispH(v)+'</td><td>'+refLinkH(v.referrer,28)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td><span class="badge seattle">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';}).join(''):'<tr><td colspan="5" class="empty-state">No Seattle visits recorded yet</td></tr>';}
         _allRecent=d.recent||[];
         renderRecent();
       })
@@ -1621,42 +1557,6 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   setInterval(refresh,60000);
   var si=document.getElementById('recentSearch');
   if(si)si.addEventListener('input',renderRecent);
-
-  // Delete button handler — delegates from tbody, calls DELETE /api/delete-visit/:id
-  document.addEventListener('click',function(e){
-    var btn=e.target.closest('.del-btn');
-    if(!btn)return;
-    var id=btn.getAttribute('data-id');
-    if(!id)return;
-    var row=btn.closest('tr');
-    if(!row)return;
-    if(!confirm('Delete visit #'+id+'? This cannot be undone.'))return;
-    btn.disabled=true;btn.textContent='…';
-    fetch('/api/delete-visit/'+id,{method:'DELETE',credentials:'include'})
-      .then(function(r){return r.json().catch(function(){return{ok:false}});})
-      .then(function(d){
-        if(d&&d.ok){row.style.transition='opacity 0.2s';row.style.opacity='0';setTimeout(function(){row.remove();},200);}
-        else{alert('Delete failed: '+(d&&d.reason||'error'));btn.disabled=false;btn.textContent='×';}
-      })
-      .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='×';});
-  });
-
-  // Profile delete — removes ALL visits for a visitor
-  document.addEventListener('click',function(e){
-    var btn=e.target.closest('.profile-del');
-    if(!btn)return;
-    var vid=btn.getAttribute('data-vid');
-    if(!vid)return;
-    if(!confirm('Delete ALL visits for visitor '+vid.slice(0,8)+'? This removes all their data permanently.'))return;
-    btn.disabled=true;btn.textContent='…';
-    fetch('/api/delete-visitor/'+encodeURIComponent(vid),{method:'DELETE',credentials:'include'})
-      .then(function(r){return r.json().catch(function(){return{ok:false}});})
-      .then(function(d){
-        if(d&&d.ok){window.location.reload();}
-        else{alert('Delete failed: '+(d&&d.error||'error'));btn.disabled=false;btn.textContent='delete';}
-      })
-      .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='delete';});
-  });
 
   // Profile merge — one-click: shows input for target ID
   document.addEventListener('click',function(e){
@@ -1685,7 +1585,6 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
       .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='merge';});
   });
 
-  function resetMergeUI(){}
 </script>
 </body>
 </html>`;
