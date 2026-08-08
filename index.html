@@ -1585,27 +1585,95 @@
         
     </script>
     <script>
-    (function logVisit() {
+    (function trackEngagement() {
         var WORKER_URL = 'https://pageview-logger.shoaibtest2.workers.dev';
         if (!WORKER_URL) return;
-
         var LOG_KEY = 'pv_b94dc26a696d248c905550a485ac8717';
-        if (sessionStorage.getItem('_pv_logged')) return;
-        sessionStorage.setItem('_pv_logged', '1');
+        var pageUrl = location.href;
 
-        var data = JSON.stringify({
-            pageUrl: location.href,
-            referrer: document.referrer || null,
-            key: LOG_KEY
+        function post(path, payload) {
+            try {
+                payload.key = LOG_KEY;
+                payload.pageUrl = pageUrl;
+                fetch(WORKER_URL + path, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    keepalive: true,
+                    credentials: 'include'
+                }).catch(function(){});
+            } catch (e) {}
+        }
+
+        // One pageview per tab session
+        if (!sessionStorage.getItem('_pv_logged')) {
+            sessionStorage.setItem('_pv_logged', '1');
+            post('/log-visit', { referrer: document.referrer || null });
+        }
+
+        // Engagement: session id persists across reloads within the same tab
+        var sid = sessionStorage.getItem('_pv_sid');
+        if (!sid) {
+            sid = (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+            sessionStorage.setItem('_pv_sid', sid);
+        }
+
+        // Heartbeat every 30s while tab is visible
+        var visible = true;
+        var beatTimer = null;
+        function sendBeat() {
+            if (visible) post('/event', { session_id: sid, event_type: 'heartbeat' });
+        }
+        function startBeat() {
+            if (beatTimer) return;
+            beatTimer = setInterval(sendBeat, 30000);
+            sendBeat();
+        }
+        function stopBeat() {
+            if (beatTimer) { clearInterval(beatTimer); beatTimer = null; }
+        }
+
+        // Visibility pause/resume
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden) {
+                visible = false; stopBeat();
+                post('/event', { session_id: sid, event_type: 'pagehide' });
+            } else {
+                visible = true;
+                post('/event', { session_id: sid, event_type: 'pageshow' });
+                startBeat();
+            }
         });
 
-        fetch(WORKER_URL + '/log-visit', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: data,
-            keepalive: true,
-            credentials: 'include'
-        }).catch(function(){});
+        // Clicks: delegated, throttled to one per second, max 10 coordinates
+        var lastClick = 0;
+        document.addEventListener('click', function (e) {
+            var now = Date.now();
+            if (now - lastClick < 1000) return; // throttle
+            lastClick = now;
+            var t = e.target;
+            var label = (t.tagName || '').toLowerCase();
+            if (t.id) label += '#' + t.id;
+            if (t.getAttribute('role')) label += '[' + t.getAttribute('role') + ']';
+            if (t.textContent) {
+                var txt = t.textContent.trim().slice(0, 30);
+                if (txt) label += ' "' + txt + '"';
+            }
+            post('/event', {
+                session_id: sid,
+                event_type: 'click',
+                x: e.clientX | 0,
+                y: e.clientY | 0,
+                target: label
+            });
+        }, true);
+
+        // Final pagehide on tab close / navigation
+        window.addEventListener('pagehide', function () {
+            post('/event', { session_id: sid, event_type: 'pagehide' });
+        });
+
+        startBeat();
     })();
     </script>
 </body>

@@ -1,4 +1,4 @@
-var VERSION = '3.11.2'; // bump when you change the worker code
+var VERSION = '3.12.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -21,6 +21,8 @@ export default {
         response = await handleStats(request, env);
       } else if (path === '/health') {
         response = handleHealth(request, env);
+      } else if (path === '/event') {
+        response = await handleEvent(request, env);
       } else if (path === '/meta') {
         response = await handleMeta(request, env);
       } else {
@@ -311,6 +313,82 @@ async function handleLogVisit(request, env) {
   return response;
 }
 
+// ── POST /event (heartbeat, click, visibility, beforeunload) ──
+async function handleEvent(request, env) {
+  const base = securityHeaders({ 'Vary': 'Origin' });
+  const origin = request.headers.get('Origin');
+  if (!origin || !originAllowed(origin, env)) {
+    return new Response('Forbidden', { status: 403, headers: securityHeaders() });
+  }
+  base['Access-Control-Allow-Origin'] = origin;
+  base['Access-Control-Allow-Methods'] = 'POST, OPTIONS';
+  base['Access-Control-Allow-Headers'] = 'Content-Type';
+  base['Access-Control-Allow-Credentials'] = 'true';
+
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: base });
+  if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405, headers: base });
+
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+
+  // Bots skip engagement entirely
+  const ua = request.headers.get('User-Agent') || '';
+  if (isBot(ua)) return Response.json({ ok: false, reason: 'bot' }, { status: 403, headers: base });
+
+  // Rate limit: max 60 events per 60s per IP (covers heartbeats at 30s + clicks)
+  const allowed = await checkRateLimit(env.DB, ip, 'events', 60, 60);
+  if (!allowed) return Response.json({ ok: false, reason: 'rate_limited' }, { status: 429, headers: base });
+
+  // Payload must be tiny — reject oversized
+  const contentLength = Number(request.headers.get('Content-Length') || 0);
+  if (contentLength > 2048) return Response.json({ ok: false, reason: 'payload_too_large' }, { status: 413, headers: base });
+
+  let body = {};
+  try { body = await request.json(); } catch (_) {
+    return Response.json({ ok: false, reason: 'bad_json' }, { status: 400, headers: base });
+  }
+
+  // Same shared-secret gate as /log-visit
+  if (!body.key || !(await constantTimeEqual(String(body.key), env.LOG_KEY))) {
+    return Response.json({ ok: false, reason: 'unauthorized' }, { status: 401, headers: base });
+  }
+
+  // Identity comes from the cookie (validated by regex) — same fence as /log-visit
+  const cookie = request.headers.get('Cookie') || '';
+  const match = cookie.match(new RegExp(VID_COOKIE + '=([^;]+)'));
+  const vid = match ? match[1] : '';
+  if (!vid || !(UUID_RE.test(vid) || FP_RE.test(vid))) {
+    return Response.json({ ok: false, reason: 'no_session' }, { status: 403, headers: base });
+  }
+
+  const session_id = String(body.session_id || '');
+  const event_type = String(body.event_type || '');
+
+  // Whitelist accepted event types — reject anything else (prevents schema abuse)
+  const allowedEvents = new Set(['heartbeat', 'click', 'pagehide', 'pageshow', 'focus']);
+  if (!allowedEvents.has(event_type)) {
+    return Response.json({ ok: false, reason: 'bad_event_type' }, { status: 400, headers: base });
+  }
+
+  if (event_type === 'click') {
+    const x = Number.isFinite(Number(body.x)) ? Math.round(Number(body.x)) : null;
+    const y = Number.isFinite(Number(body.y)) ? Math.round(Number(body.y)) : null;
+    const target = typeof body.target === 'string' ? body.target.slice(0, 200) : null;
+    const extra = typeof body.extra === 'string' ? body.extra.slice(0, 200) : null;
+    await env.DB.prepare(
+      `INSERT INTO page_engagement (visitor_id, session_id, event_type, page_url, x, y, target, extra)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(vid, session_id || null, event_type, body.pageUrl || null, x, y, target, extra).run();
+  } else {
+    // heartbeat / pagehide / pageshow / focus — no x/y
+    await env.DB.prepare(
+      `INSERT INTO page_engagement (visitor_id, session_id, event_type, page_url)
+       VALUES (?, ?, ?, ?)`
+    ).bind(vid, session_id || null, event_type, body.pageUrl || null).run();
+  }
+
+  return Response.json({ ok: true }, { headers: base });
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FP_RE = /^fp-[0-9a-f]{12}$/;
 const VID_COOKIE = 'vid2';
@@ -370,6 +448,17 @@ async function sha256Hex(str) {
 function visitor_id_preview(id) {
   if (!id) return null;
   return String(id).replace(/^fp-/, '').slice(0, 8);
+}
+
+// Human-readable duration helper for the dashboard stat cards.
+function fmtDur(sec) {
+  sec = Math.max(0, Math.round(sec || 0));
+  if (sec < 60) return sec + 's';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return m + 'm' + (s ? ' ' + s + 's' : '');
+  const h = Math.floor(m / 60);
+  return h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
 }
 
 // ── POST /logout ──
@@ -490,16 +579,17 @@ async function verifyTurnstile(request, env, token) {
 
 async function renderDashboard(db) {
   try {
-    const [totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers] = await Promise.all([
+    const [totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers, engagement] = await Promise.all([
       queryStats(db),
       queryTopCountries(db),
       queryRecent(db),
       querySeattleStats(db),
       querySeattleAll(db),
       queryTrend(db, 30),
-      queryTopReferrers(db)
+      queryTopReferrers(db),
+      queryEngagement(db),
     ]);
-    return dashboardHtml(totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers);
+    return dashboardHtml(totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers, engagement);
   } catch (err) {
     console.error('renderDashboard error:', err.stack || err.message);
     return '<html><body><h1>500</h1><pre>' + (err.stack || err.message) + '</pre></body></html>';
@@ -530,7 +620,7 @@ async function handleStats(request, env) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: jsonHeaders });
   }
 
-  const [totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent] = await Promise.all([
+  const [totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, engagement] = await Promise.all([
     queryStats(env.DB),
     queryTopCountries(env.DB),
     queryTrend(env.DB, 30),
@@ -538,9 +628,10 @@ async function handleStats(request, env) {
     querySeattleStats(env.DB),
     querySeattleAll(env.DB),
     queryRecent(env.DB),
+    queryEngagement(env.DB),
   ]);
 
-  return Response.json({ totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent }, { headers: jsonHeaders });
+  return Response.json({ totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, engagement }, { headers: jsonHeaders });
 }
 
 // ── GET /health ──
@@ -593,6 +684,54 @@ async function queryStats(db) {
     unique: row?.uniq || 0,
     today: row?.today || 0,
     last24h: row?.last24h || 0,
+  };
+}
+
+async function queryEngagement(db) {
+  // Sessions with at least one heartbeat: duration = last heartbeat − first pageview-ish event
+  // We approximate session start from the earliest engagement row and end from the latest.
+  const { results: sessions } = await db.prepare(
+    `SELECT session_id,
+            MIN(created_at) AS started,
+            MAX(created_at) AS ended,
+            COUNT(*) AS events
+     FROM page_engagement
+     WHERE session_id IS NOT NULL AND session_id != ''
+     GROUP BY session_id
+     ORDER BY started DESC
+     LIMIT 50`
+  ).all();
+
+  const perSession = (sessions || []).map(s => {
+    const secs = Math.max(0, Math.round((new Date(s.ended) - new Date(s.started)) / 1000));
+    return {
+      session: (s.session_id || '').slice(0, 12),
+      started: s.started,
+      ended: s.ended,
+      durationSec: secs,
+      events: s.events || 0,
+    };
+  });
+
+  const totalSessions = perSession.length;
+  const totalSec = perSession.reduce((a, b) => a + b.durationSec, 0);
+  const avgSec = totalSessions ? Math.round(totalSec / totalSessions) : 0;
+
+  // Top clicked targets
+  const { results: clicks } = await db.prepare(
+    `SELECT target, COUNT(*) AS count
+     FROM page_engagement
+     WHERE event_type = 'click' AND target IS NOT NULL AND target != ''
+     GROUP BY target
+     ORDER BY count DESC
+     LIMIT 8`
+  ).all();
+
+  return {
+    sessions: totalSessions,
+    avgDurationSec: avgSec,
+    recent: perSession.slice(0, 10),
+    topClicks: clicks || [],
   };
 }
 
@@ -857,7 +996,7 @@ ${hasTurnstile ? `<script>
 </html>`;
 }
 
-function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, trend, referrers) {
+function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, trend, referrers, engagement) {
   const trendMax = Math.max(1, ...trend.map(t => t.count));
   const trendPoints = trend.length ? trend.map((t, i) => {
     const x = (trend.length === 1) ? 50 : (i / (trend.length - 1)) * 100;
@@ -1085,6 +1224,12 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="stat24h">${totals.last24h}</div><div class="stat-label">Last 24 Hours</div></div>
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="stat-value" id="statTotal">${totals.total}</div><div class="stat-label">Total Views</div></div>
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></div><div class="stat-value" id="statUnique">${totals.unique}</div><div class="stat-label">Unique Visitors</div></div>
+  </div>
+  <div class="stats" style="margin-bottom:1.5rem">
+    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="statSessions">${(engagement&&engagement.sessions)||0}</div><div class="stat-label">Sessions Tracked</div></div>
+    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></div><div class="stat-value" id="statAvg">${fmtDur((engagement&&engagement.avgDurationSec)||0)}</div><div class="stat-label">Avg. Time on Page</div></div>
+    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">${(engagement&&engagement.topClicks||[]).length}</div><div class="stat-label">Most-Clicked</div></div>
+    <div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">${(engagement&&engagement.topClicks||[]).slice(0,3).map(c=>esc(c.target)+' <strong>'+c.count+'</strong>').join(' &middot; ')||'—'}</div></div>
   </div>
 
   <div class="grid-2">
