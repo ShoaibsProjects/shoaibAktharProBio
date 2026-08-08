@@ -20,7 +20,6 @@
 
   "vars": {
     "PAGE_URL": "https://shoaibakthar.pro",
-    "LOG_KEY": "REDACTED_LEGACY_ANALYTICS_MARKER",
     "ALLOWED_ORIGINS": "https://shoaibsprojects.github.io,https://shoaibakthar.pro,http://localhost"
   },
 
