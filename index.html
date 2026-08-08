@@ -423,7 +423,7 @@
             height: 100%;
             object-fit: cover;
             display: block;
-            transition: transform var(--transition-slow);
+            transition: transform var(--transition-slow), box-shadow var(--transition-slow);
         }
 
         .photo-item:hover img {
@@ -580,11 +580,13 @@
         .info-card {
             background: var(--apple-light-gray);
             padding: clamp(1.875rem, 4vw, 2.8125rem) clamp(1.5rem, 3vw, 2.1875rem);
-            transition: all var(--transition-base);
+            transition: transform var(--transition-base), box-shadow var(--transition-base), background-color var(--transition-base);
             position: relative;
             overflow: hidden;
             border-radius: var(--radius-lg);
             min-height: 120px;
+            will-change: transform;
+            transform: translateZ(0);
         }
 
         .info-card::before {
@@ -721,7 +723,7 @@
         .contact-info a {
             color: var(--apple-blue);
             text-decoration: none;
-            transition: all var(--transition-fast);
+            transition: color var(--transition-fast), background-color var(--transition-fast);
             padding: var(--space-xs) var(--space-sm);
             border-radius: var(--radius-sm);
             display: inline-block;
@@ -988,20 +990,18 @@
         .js .reveal {
             opacity: 0;
             translate: 0 28px;
+            transition: opacity 720ms cubic-bezier(0.22, 1, 0.36, 1), translate 720ms cubic-bezier(0.22, 1, 0.36, 1);
+            transition-delay: var(--reveal-delay, 0ms);
+            will-change: opacity, translate;
+            contain: content;
         }
 
         .js .reveal.is-visible {
             opacity: 1;
             translate: 0 0;
-            animation: revealRise 720ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
-            animation-delay: var(--reveal-delay, 0ms);
         }
 
-        @keyframes revealRise {
-            from {
-                opacity: 0;
-                translate: 0 28px;
-            }
+
             to {
                 opacity: 1;
                 translate: 0 0;
@@ -1183,41 +1183,41 @@
 
     <main class="container" id="main-content">
         
-        <section class="section" aria-labelledby="personal-title">
+        <section class="section" aria-labelledby="personal-title" style="--reveal-delay: 0ms">
             <div class="section-header reveal">
                 <h2 class="section-title" id="personal-title">Personal Details</h2>
                 <p class="section-subtitle">Essential Information</p>
             </div>
             <div class="info-grid stagger">
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Date of Birth</div>
                     <div class="info-value">July 17, 1999</div>
                 </div>
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Age</div>
                     <div class="info-value">26 Years</div>
                 </div>
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Place of Birth</div>
                     <div class="info-value">Chennai, India</div>
                 </div>
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Currently Residing</div>
                     <div class="info-value">Minneapolis, USA</div>
                 </div>
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Height</div>
                     <div class="info-value">5'7"</div>
                 </div>
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Religion</div>
                     <div class="info-value">Islam(Sunni)</div>
                 </div>
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Education</div>
                     <div class="info-value">B.Tech - Computer Science & Engineering<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">SRM Institute of Science and Technology (2021)</span></div>
                 </div>
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Dual Master's Degrees</div>
                     <div class="info-value">M.S. Cyber Security<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">Adelphi University, New York (2023)</span><br>M.S. Security Technologies<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">University of Minnesota (2026)</span></div>
                 </div>
@@ -1225,25 +1225,25 @@
         </section>
 
         
-        <section class="section" aria-labelledby="professional-title">
+        <section class="section" aria-labelledby="professional-title" style="--reveal-delay: 80ms">
             <div class="section-header reveal">
                 <h2 class="section-title" id="professional-title">Professional Experience</h2>
                 <p class="section-subtitle">Career & Expertise</p>
             </div>
             <div class="info-grid stagger">
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Current Position</div>
                     <div class="info-value">Cybersecurity Engineer<br><a href="https://www.linkedin.com/in/shoaib-akthar-shajahan/" target="_blank" rel="noopener noreferrer" style="font-size:0.75rem;color:var(--apple-medium-gray);text-decoration:none;margin-top:0.5rem;display:inline-block">LinkedIn →</a></div>
                 </div>
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Specialization</div>
                     <div class="info-value">Identity & Access Management</div>
                 </div>
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Company</div>
                     <div class="info-value">ObserveID, Inc.</div>
                 </div>
-                <div class="info-card reveal" tabindex="0">
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Client</div>
                     <div class="info-value">Warner Bros. Discovery</div>
                 </div>
@@ -1251,7 +1251,7 @@
         </section>
 
         
-        <section class="section" aria-labelledby="photos-title">
+        <section class="section" aria-labelledby="photos-title" style="--reveal-delay: 160ms">
             <div class="section-header reveal">
                 <h2 class="section-title" id="photos-title">Photos</h2>
                 <p class="section-subtitle">A Glimpse Into My Life</p>
@@ -1301,7 +1301,7 @@
         </section>
 
         
-        <section class="section" aria-labelledby="about-title">
+        <section class="section" aria-labelledby="about-title" style="--reveal-delay: 240ms">
             <div class="section-header reveal">
                 <h2 class="section-title" id="about-title">About Me</h2>
                 <p class="section-subtitle">My Story</p>
@@ -1313,7 +1313,7 @@
         </section>
 
         
-        <section class="section" aria-labelledby="faith-title">
+        <section class="section" aria-labelledby="faith-title" style="--reveal-delay: 320ms">
             <div class="section-header reveal">
                 <h2 class="section-title" id="faith-title">Faith & Values</h2>
                 <p class="section-subtitle">What Guides Me</p>
@@ -1324,13 +1324,13 @@
         </section>
 
         
-        <section class="section" aria-labelledby="family-title">
+        <section class="section" aria-labelledby="family-title" style="--reveal-delay: 400ms">
             <div class="section-header reveal">
                 <h2 class="section-title" id="family-title">Family Background</h2>
                 <p class="section-subtitle">About My Family</p>
             </div>
             <div class="two-column">
-                <div class="family-card reveal" tabindex="0">
+                <div class="family-card reveal" tabindex="0" data-spotlight>
                     <div class="family-member">
                         <div class="family-label">Father's Name</div>
                         <div class="family-value">K. Shajahan</div>
@@ -1344,7 +1344,7 @@
                         <div class="family-value">S. Parvin Sulthana</div>
                     </div>
                 </div>
-                <div class="family-card reveal" tabindex="0">
+                <div class="family-card reveal" tabindex="0" data-spotlight>
                     <div class="family-member">
                         <div class="family-label">Siblings</div>
                         <div class="family-value">Younger Sister</div>
@@ -1359,7 +1359,7 @@
         </section>
 
         
-        <section class="section" aria-labelledby="contact-title">
+        <section class="section" aria-labelledby="contact-title" style="--reveal-delay: 480ms">
             <div class="contact-card reveal" tabindex="0">
                 <h2 class="contact-title" id="contact-title">Get In Touch</h2>
                 <p class="contact-subtitle">For Further Discussion</p>
@@ -1483,7 +1483,21 @@
         const navSectionIds = ['personal-title', 'professional-title', 'photos-title', 'about-title', 'faith-title', 'family-title', 'contact-title'];
         const navLinks = Array.from(document.querySelectorAll('.nav-link'));
 
+        // Cache section offsets — only recalculate on resize/scroll-end, not every frame
+        let sectionOffsets = [];
+        let offsetsDirty = true;
+        function refreshOffsets() {
+            const y = window.pageYOffset || document.documentElement.scrollTop;
+            sectionOffsets = navSectionIds.map(id => {
+                const el = document.getElementById(id);
+                return el ? el.offsetTop : Infinity;
+            });
+            offsetsDirty = false;
+        }
+
+        let scrollRaf = 0;
         function onScrollUI() {
+            scrollRaf = 0;
             const y = window.pageYOffset || document.documentElement.scrollTop;
             const max = document.documentElement.scrollHeight - window.innerHeight;
             const p = max > 0 ? y / max : 0;
@@ -1492,19 +1506,23 @@
             if (scrollProgress) scrollProgress.style.transform = `scaleX(${p})`;
             if (backToTop) backToTop.classList.toggle('is-visible', y > 600);
 
+            if (offsetsDirty) refreshOffsets();
             const probe = y + window.innerHeight * 0.4;
             let current = null;
-            for (const id of navSectionIds) {
-                const el = document.getElementById(id);
-                if (el && (el.getBoundingClientRect().top + y) <= probe) current = id;
+            for (let i = sectionOffsets.length - 1; i >= 0; i--) {
+                if (sectionOffsets[i] <= probe) { current = navSectionIds[i]; break; }
             }
             navLinks.forEach(link => {
                 link.classList.toggle('is-active', link.getAttribute('href') === '#' + current);
             });
         }
 
-        window.addEventListener('scroll', () => window.requestAnimationFrame(onScrollUI), { passive: true });
-        window.addEventListener('resize', () => window.requestAnimationFrame(onScrollUI), { passive: true });
+        function scheduleScroll() {
+            if (!scrollRaf) scrollRaf = window.requestAnimationFrame(onScrollUI);
+        }
+        window.addEventListener('scroll', scheduleScroll, { passive: true });
+        window.addEventListener('resize', () => { offsetsDirty = true; scheduleScroll(); }, { passive: true });
+        refreshOffsets();
         onScrollUI();
 
         if (backToTop) {
@@ -1530,13 +1548,28 @@
         }
 
         
-        document.querySelectorAll('.info-card, .family-card').forEach(card => {
-            card.addEventListener('pointermove', (e) => {
-                const rect = card.getBoundingClientRect();
-                card.style.setProperty('--mx', ((e.clientX - rect.left) / rect.width * 100).toFixed(1) + '%');
-                card.style.setProperty('--my', ((e.clientY - rect.top) / rect.height * 100).toFixed(1) + '%');
+        // Throttled pointermove — only update on animation frame, and only for cards with the spotlight effect
+        const spotlightCards = document.querySelectorAll('.info-card[data-spotlight], .family-card[data-spotlight]');
+        if (spotlightCards.length) {
+            let pointerRaf = 0;
+            let pending = null;
+            function applySpotlight() {
+                pointerRaf = 0;
+                if (pending) {
+                    const { card, e } = pending;
+                    const rect = card.getBoundingClientRect();
+                    card.style.setProperty('--mx', ((e.clientX - rect.left) / rect.width * 100).toFixed(1) + '%');
+                    card.style.setProperty('--my', ((e.clientY - rect.top) / rect.height * 100).toFixed(1) + '%');
+                    pending = null;
+                }
+            }
+            spotlightCards.forEach(card => {
+                card.addEventListener('pointermove', (e) => {
+                    pending = { card, e };
+                    if (!pointerRaf) pointerRaf = requestAnimationFrame(applySpotlight);
+                });
             });
-        });
+        }
 
         
         
