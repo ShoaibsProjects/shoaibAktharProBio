@@ -1,4 +1,4 @@
-var VERSION = '3.16.0'; // bump when you change the worker code
+var VERSION = '3.16.1'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -23,9 +23,9 @@ export default {
         response = handleHealth(request, env);
       } else if (path === '/event') {
         response = await handleEvent(request, env);
-      } else if (path === '/api/delete-visit') {
+      } else if (path.startsWith('/api/delete-visit/')) {
         response = await handleDeleteVisit(request, env);
-      } else if (path === '/api/delete-visitor') {
+      } else if (path.startsWith('/api/delete-visitor/')) {
         response = await handleDeleteVisitor(request, env);
       } else if (path === '/api/merge-visitors') {
         response = await handleMergeVisitors(request, env);
@@ -465,10 +465,28 @@ async function handleMergeVisitors(request, env) {
     return Response.json({ error: 'bad_params' }, { status: 400, headers: h });
   }
 
-  const info = await env.DB.prepare('UPDATE page_views SET visitor_id = ? WHERE visitor_id = ?').bind(target, source).run();
-  const merged = (info && info.changes) || 0;
-  console.log(JSON.stringify({ event: 'visitors_merged', source, target, merged }));
-  return Response.json({ ok: true, merged, source, target }, { headers: h });
+  // Validate that both visitor_ids exist
+  const [srcCount, tgtCount] = await Promise.all([
+    env.DB.prepare('SELECT COUNT(*) AS c FROM page_views WHERE visitor_id = ?').bind(source).first(),
+    env.DB.prepare('SELECT COUNT(*) AS c FROM page_views WHERE visitor_id = ?').bind(target).first(),
+  ]);
+  if (!(srcCount && srcCount.c > 0)) {
+    return Response.json({ error: 'source_not_found' }, { status: 404, headers: h });
+  }
+  if (!(tgtCount && tgtCount.c > 0)) {
+    return Response.json({ error: 'target_not_found' }, { status: 404, headers: h });
+  }
+
+  // Merge page_views
+  const r1 = await env.DB.prepare('UPDATE page_views SET visitor_id = ? WHERE visitor_id = ?').bind(target, source).run();
+  const merged = (r1 && r1.changes) || 0;
+
+  // Merge engagement rows too (heartbeats, clicks, etc.)
+  const r2 = await env.DB.prepare('UPDATE page_engagement SET visitor_id = ? WHERE visitor_id = ?').bind(target, source).run();
+  const engMerged = (r2 && r2.changes) || 0;
+
+  console.log(JSON.stringify({ event: 'visitors_merged', source, target, visits: merged, engagement: engMerged }));
+  return Response.json({ ok: true, merged, engagement: engMerged, source, target }, { headers: h });
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1636,41 +1654,38 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
       .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='delete';});
   });
 
-  // Profile merge — combine two visitor profiles
+  // Profile merge — simple: click src, then click target
   var _mergeSource=null;
+  var _mergeBtn=null;
   document.addEventListener('click',function(e){
     var btn=e.target.closest('.profile-merge');
     if(!btn)return;
     var vid=btn.getAttribute('data-vid');
     if(!vid)return;
+    // First click: pick source
     if(!_mergeSource){
       _mergeSource=vid;
-      btn.textContent='paste target…';
-      btn.style.borderColor='var(--accent)';
-      btn.style.color='var(--accent)';
-      document.querySelectorAll('.profile-merge').forEach(function(b){
-        if(b!==btn){b.disabled=true;b.style.opacity='0.4';}
-      });
-      alert('Now click "merge" on the TARGET profile you want to merge INTO. "'+vid.slice(0,8)+'" will be merged into it.');
+      _mergeBtn=btn;
+      btn.textContent='---';btn.style.opacity='0.5';
       return;
     }
-    if(_mergeSource===vid){_mergeSource=null;resetMergeUI();return;}
+    // Second click: pick target
     var target=vid;
-    if(!confirm('Merge "'+_mergeSource.slice(0,8)+'" into "'+target.slice(0,8)+'"? All visits from source will get the target ID.')){_mergeSource=null;resetMergeUI();return;}
+    if(_mergeSource===target){resetMergeUI();return;}
+    var merged=_mergeSource.slice(0,8)+' → '+target.slice(0,8);
+    if(!confirm('Merge '+_mergeSource.slice(0,10)+' into '+target.slice(0,10)+'?')){resetMergeUI();return;}
     fetch('/api/merge-visitors',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:_mergeSource,target:target})})
       .then(function(r){return r.json().catch(function(){return{ok:false}});})
       .then(function(d){
-        _mergeSource=null;resetMergeUI();
+        resetMergeUI();
         if(d&&d.ok){window.location.reload();}
-        else{alert('Merge failed: '+(d&&d.error||'error'));}
+        else{alert('Merge failed: '+(d&&d.error||'unknown'));}
       })
-      .catch(function(){_mergeSource=null;resetMergeUI();alert('Network error');});
+      .catch(function(){resetMergeUI();alert('Network error');});
   });
   function resetMergeUI(){
     _mergeSource=null;
-    document.querySelectorAll('.profile-merge').forEach(function(b){
-      b.textContent='merge';b.disabled=false;b.style.opacity='';b.style.borderColor='';b.style.color='';
-    });
+    if(_mergeBtn){_mergeBtn.textContent='merge';_mergeBtn.style.opacity='';_mergeBtn=null;}
   }
 </script>
 </body>
