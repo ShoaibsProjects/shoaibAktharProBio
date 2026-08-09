@@ -1,4 +1,4 @@
-var VERSION = '3.18.0'; // bump when you change the worker code
+var VERSION = '3.18.1'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -1128,13 +1128,14 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
 
   const recentRows = visits.map(v => {
     const ago = timeAgo(v.created_at);
+    const recent = (Date.now() - new Date(v.created_at + 'Z').getTime()) < 3600000; // within last hour
     const loc = [v.city, v.region, v.country].filter(Boolean).join(', ') || 'Unknown';
     const os = esc(v.os || '');
     const browser = esc(v.browser || '');
     const dev = esc(v.device_type || '');
     const vid = v.visitor_id || '';
-    return '<tr data-vid="' + vid + '">'
-      + '<td><div>' + formatTime(v.created_at) + '</div><div style="font-size:0.7rem;color:var(--muted)">' + ago + '</div></td>'
+    return '<tr data-vid="' + vid + '"' + (recent ? ' class="new-visit"' : '') + '>'
+      + '<td><div>' + formatTime(v.created_at) + '</div><div style="font-size:0.7rem;color:var(--muted)">' + ago + (recent ? ' <span class="badge-new">NEW</span>' : '') + '</div></td>'
       + '<td>' + esc(loc) + coordH(v) + '</td>'
       + '<td style="font-size:0.78rem">' + (dev ? '<span class="badge">' + dev + '</span> ' : '') + ' ' + esc([os, browser].filter(Boolean).join(' · ') || '—') + '</td>'
       + '<td>' + (v.referrer
@@ -1299,6 +1300,10 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   html[data-theme="dark"] tr:hover td{background:rgba(41,151,255,0.08)}
   .badge{display:inline-block;padding:3px 9px;border-radius:8px;font-size:0.68rem;font-weight:700;letter-spacing:0.02em;background:rgba(46,125,50,0.12);color:#2e7d32;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
   html[data-theme="dark"] .badge{background:rgba(129,199,132,0.16);color:#81c784}
+  .badge-new{display:inline-block;padding:2px 6px;border-radius:6px;font-size:0.6rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;background:rgba(46,125,50,0.18);color:#2e7d32;margin-left:6px;animation:pulse-new 2s ease-in-out infinite}
+  @keyframes pulse-new{0%,100%{opacity:1}50%{opacity:0.5}}
+  .new-visit td{background:rgba(46,125,50,0.04)}
+  html[data-theme="dark"] .new-visit td{background:rgba(76,175,80,0.06)}
   .profile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem;margin-top:0.5rem}
   .profile-card{position:relative;background:linear-gradient(150deg,rgba(255,255,255,0.6),rgba(255,255,255,0.25));border:1px solid var(--border);border-radius:var(--radius-md);padding:1.1rem;box-shadow:inset 0 1px 0 rgba(255,255,255,0.6);transition:transform 0.2s,box-shadow 0.2s}
   .profile-card:hover{transform:translateY(-2px);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 8px 24px rgba(0,80,180,0.12)}
@@ -1471,7 +1476,8 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   var _allRecent=[];
   function rowHtml(v){
     var vid=v.visitor_id||'';
-    return '<tr data-vid="'+vid+'"><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH(vid.slice(0,8))+'</span></td></tr>';
+    var isNew=(Date.now()-new Date(v.created_at+'Z').getTime())<3600000;
+    return '<tr data-vid="'+vid+'"'+(isNew?' class="new-visit"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+(isNew?' <span class="badge-new">NEW</span>':'')+'</div></td><td>'+locH(v)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH(vid.slice(0,8))+'</span></td></tr>';
   }
   function renderRecent(){
     var rt=document.getElementById('recentTbody');
