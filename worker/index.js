@@ -1124,15 +1124,15 @@ function loginPage(msg, env) {
 ${hasTurnstile ? `<script>
   document.getElementById('loginForm').addEventListener('submit', function(e){
     var t = window.turnstile;
-    if (!t) { return; } // widget not loaded yet — allow submit, server handles it
+    // Widget not loaded at all — let the form submit normally (server handles it)
+    if (!t) return;
     var token = t.getResponse();
     if (token) {
       appendToken(this, token);
       t.reset();
       return;
     }
-    // Token not ready (slow network / mobile / widget still rendering): wait for it.
-    // On 3G/4G, Turnstile can take 10-15s. Poll up to 20s before giving up.
+    // Token not ready — poll up to 10s, then submit anyway
     e.preventDefault();
     var btn = document.querySelector('button[type="submit"]');
     var origText = btn ? btn.textContent : '';
@@ -1146,10 +1146,10 @@ ${hasTurnstile ? `<script>
         appendToken(document.getElementById('loginForm'), tk);
         window.turnstile.reset();
         document.getElementById('loginForm').submit();
-      } else if (tries > 100) { // ~20s timeout
+      } else if (tries > 50) { // ~10s timeout — submit anyway
         clearInterval(timer);
-        if (btn) { btn.textContent = origText; btn.disabled = false; }
-        alert('Verification timed out. Please complete the challenge above and try again.');
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
+        document.getElementById('loginForm').submit();
       }
     }, 200);
   });
