@@ -1479,37 +1479,40 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   </div>
   ${engagementHtml}
 
-  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem"><h2>Visitor Profiles</h2><p style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem">Each card is one device/person. Same visitor ID = same browser/device.</p><div class="profile-grid" id="profileGrid">' + profiles.map(function(p,i){
-    // Friendly label: OS+Browser + primary city
-    var devIcon = '📱';
-    var devLabel = 'Unknown';
+  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem"><h2>Visitor Profiles</h2><p style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem">Click ★ Track to follow a visitor — they stay at the top with a golden glow.</p><div class="profile-grid tracked-section" id="profileGrid">' + profiles.map(function(p,i){
     var os = (p.oss && p.oss[0]) || '';
     var browser = (p.browsers && p.browsers[0]) || '';
-    var isMobile = os.toLowerCase().indexOf('ios')>=0 || os.toLowerCase().indexOf('android')>=0;
-    if (isMobile) devIcon = '📱';
-    else if (os.toLowerCase().indexOf('macos')>=0 || os.toLowerCase().indexOf('windows')>=0) devIcon = '💻';
-    if (os) devLabel = os;
-    // Friendly name: e.g. "Android · Chrome · Seattle"
-    var label = [];
-    if (os && os.toLowerCase().indexOf('unknown')<0) label.push(os);
-    if (browser && browser.toLowerCase().indexOf('unknown')<0) label.push(browser);
+    var rawUA = (p.uas && p.uas[0]) || '';
+    // Fallback: extract from raw UA if parsed fields are empty (old data)
+    if (!os && rawUA){
+      if (/iPhone|iPad/i.test(rawUA)) os='iOS';
+      else if (/Android/i.test(rawUA)) os='Android';
+      else if (/Mac OS X/i.test(rawUA)) os='macOS';
+      else if (/Windows/i.test(rawUA)) os='Windows';
+    }
+    if (!browser && rawUA){
+      if (/Edg\//i.test(rawUA)) browser='Edge';
+      else if (/Chrome\//i.test(rawUA)) browser='Chrome';
+      else if (/Firefox\//i.test(rawUA)) browser='Firefox';
+      else if (/Safari\//i.test(rawUA)) browser='Safari';
+    }
+    var devIcon = os && /macos|windows/i.test(os) ? '💻' : '📱';
+    // Friendly name: "Android · Chrome · Seattle"
+    var label=[];
+    if (os) label.push(os);
+    if (browser) label.push(browser);
     var primaryCity = p.cities[0] || '';
     if (primaryCity) label.push(primaryCity);
     var visitorName = label.length>0 ? label.join(' · ') : 'Device '+(i+1);
     if (visitorName.length>35) visitorName=visitorName.slice(0,33)+'…';
-    // Probability based on visits + time span
     var span = p.firstSeen && p.lastSeen ? (new Date(p.lastSeen+'Z').getTime()-new Date(p.firstSeen+'Z').getTime())/(86400000) : 0;
     var prob = p.visits>=6 ? 'Regular' : p.visits>=3 ? (span>7 ? 'Frequent' : 'Returning') : 'New';
     var probClass = p.visits>=6 ? 'high' : p.visits>=3 ? 'med' : 'low';
-    // ISP — the strongest same-person signal
     var ispList = p.isps && p.isps.filter(Boolean).join(', ') || '';
-    // IP hashes — same IP = same subnet/household
     var ipList = p.ipHashes && p.ipHashes.filter(Boolean).map(function(h){return h.slice(0,8)}).join(', ') || '';
-    // Cities string
     var citiesStr = p.cities.slice(0,3).join(', ') + (p.cities.length>3 ? ' +'+(p.cities.length-3) : '');
-    // Time of day pattern
     var times = p.timezones && p.timezones.filter(Boolean).join(', ') || '';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(devLabel)+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div><div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div><div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
   }).join('') + '</div></div>' : ''}
 
   <div class="grid-2">
