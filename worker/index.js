@@ -1,4 +1,4 @@
-var VERSION = '3.20.0'; // bump when you change the worker code
+var VERSION = '3.21.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -1416,6 +1416,16 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .profile-merge:hover{border-color:var(--accent);color:var(--accent);background:rgba(0,113,227,0.08)}
   html[data-theme="dark"] .profile-card{background:linear-gradient(150deg,rgba(50,58,78,0.5),rgba(28,31,38,0.35))}
   html[data-theme="dark"] .profile-merge{background:rgba(255,255,255,0.06)}
+  .track-btn{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
+  .track-btn:hover{border-color:#f59e0b;color:#b45309;background:rgba(245,158,11,0.1)}
+  .profile-card.tracked{border:2px solid #f59e0b;box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 0 24px rgba(245,158,11,0.15),0 8px 32px rgba(0,0,0,0.08)}
+  .profile-card.tracked .track-btn{background:rgba(245,158,11,0.15);color:#b45309;border-color:#f59e0b}
+  html[data-theme="dark"] .profile-card.tracked{border-color:#fbbf24;box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 0 24px rgba(251,191,36,0.18)}
+  html[data-theme="dark"] .profile-card.tracked .track-btn{background:rgba(251,191,36,0.2);color:#fde68a;border-color:#fbbf24}
+  tr.tracked-visit td{background:rgba(245,158,11,0.06)}
+  html[data-theme="dark"] tr.tracked-visit td{background:rgba(251,191,36,0.08)}
+  .tracked-section h2::after{content:' ⚡ Tracked';font-size:0.7rem;color:#f59e0b;font-weight:600;vertical-align:middle}
+  html[data-theme="dark"] .tracked-section h2::after{color:#fbbf24}
   html[data-theme="dark"] .prob-high{background:rgba(76,175,80,0.2);color:#81c784}
   html[data-theme="dark"] .prob-med{background:rgba(255,152,0,0.2);color:#ffb74d}
   html[data-theme="dark"] .prob-low{background:rgba(158,158,158,0.2);color:#bdbdbd}
@@ -1499,7 +1509,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     var citiesStr = p.cities.slice(0,3).join(', ') + (p.cities.length>3 ? ' +'+(p.cities.length-3) : '');
     // Time of day pattern
     var times = p.timezones && p.timezones.filter(Boolean).join(', ') || '';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits <span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span></div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(devLabel)+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+'<br><span style="font-size:0.68rem;opacity:0.8">👆 '+timeAgo(p.firstSeen)+' &middot; Last seen '+timeAgo(p.lastSeen)+'</span></div><div class="profile-actions"><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(devLabel)+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div><div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
   }).join('') + '</div></div>' : ''}
 
   <div class="grid-2">
@@ -1660,8 +1670,57 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
         if(d&&d.ok){window.location.reload();}
         else{alert('Merge failed: '+(d&&d.error||'unknown'));btn.disabled=false;btn.textContent='merge';}
       })
-      .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='merge';});
+       .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='merge';});
   });
+
+  // ── Visitor tracking (localStorage, no backend) ──
+  var TRACK_KEY='dash-tracked';
+  function getTracked(){try{var v=localStorage.getItem(TRACK_KEY);return v?JSON.parse(v):[];}catch(e){return[];}}
+  function saveTracked(arr){try{localStorage.setItem(TRACK_KEY,JSON.stringify(arr));}catch(e){}}
+
+  // Apply tracked styles to profile cards and recent visit rows
+  function applyTracked(){
+    var t=getTracked();
+    // Profile cards
+    document.querySelectorAll('.profile-card').forEach(function(c){
+      var vid=c.getAttribute('data-vid');
+      var btn=c.querySelector('.track-btn');
+      if(t.indexOf(vid)>=0){c.classList.add('tracked');if(btn)btn.textContent='★ Tracked';}
+      else{if(btn)btn.textContent='☆ Track';}
+    });
+    // Recent visit rows
+    document.querySelectorAll('tr[data-vid]').forEach(function(r){
+      if(t.indexOf(r.getAttribute('data-vid'))>=0)r.classList.add('tracked-visit');
+    });
+  }
+
+  // Click handler for track buttons
+  document.addEventListener('click',function(e){
+    var btn=e.target.closest('.track-btn');
+    if(!btn)return;
+    var vid=btn.getAttribute('data-vid');
+    if(!vid)return;
+    var t=getTracked();
+    var idx=t.indexOf(vid);
+    if(idx>=0){t.splice(idx,1);btn.textContent='☆ Track';}else{t.push(vid);btn.textContent='★ Tracked';}
+    saveTracked(t);
+    applyTracked();
+  });
+
+  // On load: apply tracking, then move tracked cards to top
+  applyTracked();
+  (function(){
+    var grid=document.getElementById('profileGrid');
+    if(!grid)return;
+    var cards=Array.from(grid.querySelectorAll('.profile-card'));
+    var t=getTracked();
+    cards.sort(function(a,b){
+      var aT=t.indexOf(a.getAttribute('data-vid'))>=0?0:1;
+      var bT=t.indexOf(b.getAttribute('data-vid'))>=0?0:1;
+      return aT-bT;
+    });
+    cards.forEach(function(c){grid.appendChild(c);});
+  })();
 
 </script>
 </body>
