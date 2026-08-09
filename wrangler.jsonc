@@ -22,6 +22,8 @@
     "PAGE_URL": "https://shoaibakthar.pro",
     "ALLOWED_ORIGINS": "https://shoaibsprojects.github.io,https://shoaibakthar.pro,http://localhost",
     "TURNSTILE_SITE_KEY": "0x4AAAAAAEEnNekKas-hBHMPRHpw37HGb_c"
+    // Uncomment to auto-purge old records (recommended: 90). Off by default.
+    // "RETAIN_DAYS": "90"
   },
 
   "triggers": {
