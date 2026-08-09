@@ -1,4 +1,4 @@
-var VERSION = '3.19.1'; // bump when you change the worker code
+var VERSION = '3.19.2'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -860,37 +860,6 @@ async function queryTopReferrers(db) {
     .map(([source, count]) => ({ source, count }));
 }
 
-// ── Seattle totals ──
-async function querySeattleStats(db) {
-  const row = await db.prepare(
-    `SELECT
-       (SELECT COUNT(*) FROM page_views WHERE city = 'Seattle') AS total,
-       (SELECT COUNT(DISTINCT visitor_id) FROM page_views WHERE city = 'Seattle') AS uniq,
-       (SELECT COUNT(*) FROM page_views WHERE city = 'Seattle' AND created_at >= datetime('now','-30 days')) AS last30,
-       (SELECT created_at FROM page_views WHERE city = 'Seattle' ORDER BY created_at ASC LIMIT 1) AS first_seen,
-       (SELECT created_at FROM page_views WHERE city = 'Seattle' ORDER BY created_at DESC LIMIT 1) AS last_seen`
-  ).first();
-  return {
-    total: row?.total || 0,
-    unique: row?.uniq || 0,
-    last30: row?.last30 || 0,
-    firstSeen: row?.first_seen || null,
-    lastSeen: row?.last_seen || null,
-  };
-}
-
-// ── All-time Seattle visits ──
-async function querySeattleAll(db) {
-  const { results } = await db.prepare(
-    `SELECT created_at, country, region, timezone, referrer, user_agent, visitor_id, device_type, os, browser, latitude, longitude, postal_code, isp, language
-     FROM page_views
-     WHERE city = 'Seattle'
-     ORDER BY created_at DESC
-     LIMIT 500`
-  ).all();
-  return results || [];
-}
-
 // ── Grouped visitor profiles (one box per device/person) ──
 async function queryVisitorProfiles(db) {
   const { results } = await db.prepare(
@@ -1639,25 +1608,7 @@ function coordH(v) {
   return '<div>' + out + '</div>';
 }
 
-// User‑agent parser — returns short display string \+ structured fields
-function parseUA(ua) {
-  if (!ua) return 'Unknown';
-  let browser = 'Other';
-  if (/Edg\//.test(ua)) browser = 'Edge';
-  else if (/Chrome\//.test(ua) && !/Chromium\//.test(ua)) browser = 'Chrome';
-  else if (/Firefox\//.test(ua)) browser = 'Firefox';
-  else if (/Safari\//.test(ua) && !/Chrome\//.test(ua)) browser = 'Safari';
-  let os = 'Unknown';
-  if (/Windows NT 10/.test(ua)) os = 'Windows';
-  else if (/Mac OS X/.test(ua)) os = 'macOS';
-  else if (/Android/.test(ua)) os = 'Android';
-  else if (/iPhone|iPad/.test(ua)) os = 'iOS';
-  else if (/Linux/.test(ua)) os = 'Linux';
-  const mobile = /Mobi|Android|iPhone|iPad/.test(ua);
-  const device = mobile ? 'Mobile' : 'Desktop';
-  return browser + ' · ' + os + ' · ' + device;
-}
-
+// User‑agent parser — returns structured fields for DB storage
 function parseUADetailed(ua) {
   if (!ua) return { device: 'Unknown', os: 'Unknown', browser: 'Unknown' };
   let browser = 'Unknown';
