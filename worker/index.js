@@ -1,4 +1,4 @@
-var VERSION = '3.18.1'; // bump when you change the worker code
+var VERSION = '3.19.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -405,6 +405,13 @@ async function handleMergeVisitors(request, env) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
   if (request.method !== 'POST') return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: h });
 
+  // CSRF: only accept requests originated from our own dashboard
+  const origin = request.headers.get('Origin') || '';
+  const host = request.headers.get('Host') || '';
+  if (origin && !origin.includes('pageview-logger') && !host.includes('pageview-logger')) {
+    return Response.json({ error: 'forbidden' }, { status: 403, headers: h });
+  }
+
   const session = sessionTokenFrom(request.headers.get('Cookie') || '');
   if (!session || !(await verifySessionToken(session, env))) {
     return Response.json({ error: 'unauthorized' }, { status: 401, headers: h });
@@ -417,6 +424,11 @@ async function handleMergeVisitors(request, env) {
   const target = String(body.target || '');
   if (!source || !target || source === target) {
     return Response.json({ error: 'bad_params' }, { status: 400, headers: h });
+  }
+
+  // Validate visitor_id format (prevents SQL injection and garbage data)
+  if (!(UUID_RE.test(source) || FP_RE.test(source)) || !(UUID_RE.test(target) || FP_RE.test(target))) {
+    return Response.json({ error: 'bad_visitor_id' }, { status: 400, headers: h });
   }
 
   // Validate that both visitor_ids exist
@@ -1308,8 +1320,8 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .profile-card{position:relative;background:linear-gradient(150deg,rgba(255,255,255,0.6),rgba(255,255,255,0.25));border:1px solid var(--border);border-radius:var(--radius-md);padding:1.1rem;box-shadow:inset 0 1px 0 rgba(255,255,255,0.6);transition:transform 0.2s,box-shadow 0.2s}
   .profile-card:hover{transform:translateY(-2px);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 8px 24px rgba(0,80,180,0.12)}
   .profile-head{display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem}
-  .profile-icon{font-size:1.3rem}
-  .profile-id{font-family:monospace;font-size:0.72rem;color:var(--muted)}
+  .profile-icon{font-size:1.3rem;flex-shrink:0}
+  .profile-name{font-size:0.82rem;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .prob{font-size:0.6rem;padding:2px 6px;border-radius:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.03em}
   .prob-high{background:rgba(46,125,50,0.15);color:#2e7d32}
   .prob-med{background:rgba(245,124,0,0.15);color:#e65100}
@@ -1317,7 +1329,8 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .profile-visits{font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:0.3rem}
   .profile-visits strong{font-variant-numeric:tabular-nums}
   .profile-loc{font-size:0.78rem;color:var(--accent);margin-bottom:0.4rem}
-  .profile-meta{font-size:0.7rem;color:var(--muted);line-height:1.4}
+  .profile-meta{font-size:0.68rem;color:var(--muted);line-height:1.5;word-break:break-word}
+  .profile-meta br{content:'';display:block;margin-top:2px}
   .profile-actions{display:flex;gap:0.4rem;margin-top:0.7rem}
   .profile-merge{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
   .profile-merge:hover{border-color:var(--accent);color:var(--accent);background:rgba(0,113,227,0.08)}
@@ -1381,14 +1394,37 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     <div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">${(engagement&&engagement.topClicks||[]).slice(0,3).map(c=>esc(c.target)+' <strong>'+c.count+'</strong>').join(' &middot; ')||'—'}</div></div>
   </div>' : ''}
 
-  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem"><h2>Visitor Profiles</h2><p style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem">Each box is one device/person. Same visitor ID = same device. Click merge to combine profiles you recognize as the same person.</p><div class="profile-grid" id="profileGrid">' + profiles.map(function(p,i){
-    var devIcon = p.devices && p.devices[0] ? (p.devices[0].toLowerCase().indexOf('mobile')>=0 ? '📱' : p.devices[0].toLowerCase().indexOf('desktop')>=0 ? '💻' : '📲') : '📱';
-    var uaShort = p.uas && p.uas[0] ? (p.uas[0].indexOf('iPhone')>=0 ? 'iPhone' : p.uas[0].indexOf('Macintosh')>=0 ? 'Mac' : p.uas[0].indexOf('Android')>=0 ? 'Android' : 'Browser') : '?';
-    var citiesStr = p.cities.slice(0,4).join(', ') + (p.cities.length>4 ? ' +'+(p.cities.length-4) : '');
-    var prob = p.visits > 3 ? 'high' : p.visits > 1 ? 'med' : 'low';
-    var ipList=p.ipHashes&&p.ipHashes.length?p.ipHashes.map(function(h){return h.slice(0,8);}).join(', '):'';
-    var ispList=p.isps&&p.isps.length?p.isps.join(', '):'';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-id" data-orig="'+esc(p.id.slice(0,10))+'">'+esc(p.id.slice(0,10))+'</span><span class="prob prob-'+prob+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits</div><div class="profile-loc">'+esc(citiesStr)+'</div><div class="profile-meta">'+esc(uaShort)+' · '+esc(p.countries.slice(0,2).join(', ')||'?')+ (ispList?' · '+esc(ispList):'')+'<br><span style="font-size:0.68rem">'+timeAgo(p.firstSeen)+' → '+timeAgo(p.lastSeen)+(ipList?' · IP: '+ipList:'')+'</span></div><div class="profile-actions"><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
+  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem"><h2>Visitor Profiles</h2><p style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem">Each card is one device/person. Same visitor ID = same browser/device.</p><div class="profile-grid" id="profileGrid">' + profiles.map(function(p,i){
+    // Friendly label: OS+Browser + primary city
+    var devIcon = '📱';
+    var devLabel = 'Unknown';
+    var os = (p.oss && p.oss[0]) || '';
+    var browser = (p.browsers && p.browsers[0]) || '';
+    var isMobile = os.toLowerCase().indexOf('ios')>=0 || os.toLowerCase().indexOf('android')>=0;
+    if (isMobile) devIcon = '📱';
+    else if (os.toLowerCase().indexOf('macos')>=0 || os.toLowerCase().indexOf('windows')>=0) devIcon = '💻';
+    if (os) devLabel = os;
+    // Friendly name: e.g. "Android · Chrome · Seattle"
+    var label = [];
+    if (os && os.toLowerCase().indexOf('unknown')<0) label.push(os);
+    if (browser && browser.toLowerCase().indexOf('unknown')<0) label.push(browser);
+    var primaryCity = p.cities[0] || '';
+    if (primaryCity) label.push(primaryCity);
+    var visitorName = label.length>0 ? label.join(' · ') : 'Device '+(i+1);
+    if (visitorName.length>35) visitorName=visitorName.slice(0,33)+'…';
+    // Probability based on visits + time span
+    var span = p.firstSeen && p.lastSeen ? (new Date(p.lastSeen+'Z').getTime()-new Date(p.firstSeen+'Z').getTime())/(86400000) : 0;
+    var prob = p.visits>=6 ? 'Regular' : p.visits>=3 ? (span>7 ? 'Frequent' : 'Returning') : 'New';
+    var probClass = p.visits>=6 ? 'high' : p.visits>=3 ? 'med' : 'low';
+    // ISP — the strongest same-person signal
+    var ispList = p.isps && p.isps.filter(Boolean).join(', ') || '';
+    // IP hashes — same IP = same subnet/household
+    var ipList = p.ipHashes && p.ipHashes.filter(Boolean).map(function(h){return h.slice(0,8)}).join(', ') || '';
+    // Cities string
+    var citiesStr = p.cities.slice(0,3).join(', ') + (p.cities.length>3 ? ' +'+(p.cities.length-3) : '');
+    // Time of day pattern
+    var times = p.timezones && p.timezones.filter(Boolean).join(', ') || '';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits <span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span></div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(devLabel)+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+'<br><span style="font-size:0.68rem;opacity:0.8">👆 '+timeAgo(p.firstSeen)+' &middot; Last seen '+timeAgo(p.lastSeen)+'</span></div><div class="profile-actions"><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
   }).join('') + '</div></div>' : ''}
 
   <div class="grid-2">
