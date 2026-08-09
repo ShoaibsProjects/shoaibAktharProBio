@@ -1,4 +1,72 @@
-var VERSION = '3.19.2'; // bump when you change the worker code
+var VERSION = '3.20.0'; // bump when you change the worker code
+
+/**
+ * pageview-logger — Cloudflare Worker analytics dashboard
+ * =======================================================
+ *
+ * Purpose: Track page views and engagement on a personal profile site
+ * (shoaibsprojects.github.io/shoaibAktharProBio) with a liquid-glass dashboard.
+ *
+ * ARCHITECTURE
+ * ────────────
+ * │ Profile Page │ ──beacon──► │ Worker │ ──write──► │ D1 Database │
+ * │ (index.html)  │   (fetch)    │ (JS)   │  (SQL)     │ (SQLite)    │
+ * │               │ ◄──cookie── │        │             │             │
+ *
+ * DATA MODEL
+ * ──────────
+ *   page_views      — one row per page load (immutable once written)
+ *   page_engagement — one row per heartbeat/click/hide event
+ *   rate_limits     — atomic UPSERT per (ip, scope, bucket)
+ *   sessions        — JTI-based server-side session revocation
+ *
+ * VISITOR IDENTITY (3-tier)
+ * ─────────────────────────
+ *   Tier 1 — Cookie (vid2): 1yr, SameSite=None, HttpOnly. Same browser = same device.
+ *   Tier 2 — Fingerprint: SHA-256(normalizedUA | lang | ISP | country) → fp-{12hex}.
+ *            ISP+country keeps strangers with identical Android UA separated.
+ *   Tier 3 — Manual merge via dashboard UI (admin override).
+ *
+ * SECURITY MODEL
+ * ──────────────
+ *   • All writes: Origin whitelist + shared-secret key (LOG_KEY)
+ *   • Session auth: HMAC-SHA-256 tokens, server-side JTI stored in D1
+ *   • Rate limits: Atomic UPSERT per IP, no race-window
+ *   • Bot blocking: 34 patterns filtered before DB write
+ *   • CSRF: Merge endpoint checks Origin header
+ *   • Key comparison: timingSafeEqual (SHA-256) — no timing side-channel
+ *   • XSS: All user data rendered via esc()/escH()
+ *   • Login: Cloudflare Turnstile challenge + brute-force rate limit
+ *
+ * ENDPOINTS
+ * ─────────
+ *   /log-visit         POST  — Page view beacon (CORS, origin+key auth)
+ *   /event             POST  — Engagement event (heartbeat/click/pagehide)
+ *   /dashboard         GET   — Liquid-glass dashboard HTML (session auth)
+ *                      POST  — Login (Turnstile + key auth)
+ *   /stats             GET   — Dashboard data as JSON (session auth)
+ *   /health            GET   — Public health check (no auth)
+ *   /meta              GET   — Worker metadata (session auth)
+ *   /api/merge-visitors POST — Merge two visitor profiles (session+CSRF auth)
+ *   /logout            POST  — Revoke session (clears cookie + D1 jti)
+ *
+ * SCHEDULED JOBS (cron: 0 3 * * * — daily at 3 AM UTC)
+ * ─────────────────────────────────────────────────────
+ *   • Purge expired rate_limit buckets (older than 2 days)
+ *   • Purge expired sessions
+ *   • (Optional) Data retention: purge old page_views and engagement rows
+ *     when RETAIN_DAYS env var is set
+ *
+ * FREE-TIER LIMITS (Cloudflare Workers Free Plan)
+ * ────────────────────────────────────────────────
+ *   100k requests/day, 10ms CPU per request
+ *   D1: 5GB storage, 5M rows read/day, 100k rows written/day
+ *   This project uses ~0.1% of free-tier capacity at current traffic.
+ *
+ * @module pageview-logger
+ * @author Shoaib Akthar
+ * @version 3.20.0
+ */
 
 export default {
   async fetch(request, env, ctx) {
@@ -56,13 +124,37 @@ export default {
     }
   },
 
-  // Daily maintenance: purge expired rate-limit buckets and expired sessions.
+  // Daily maintenance: purge expired rate-limit buckets, expired sessions,
+  // and optionally old page_views / engagement rows (configurable via RETAIN_DAYS env var).
   async scheduled(event, env) {
     const cutoff = Math.floor(Date.now() / 1000);
-    await Promise.all([
+    const ops = [
       env.DB.prepare('DELETE FROM rate_limits WHERE bucket < ?').bind(cutoff - 2 * 86400).run(),
       env.DB.prepare('DELETE FROM sessions WHERE exp < ?').bind(cutoff).run(),
-    ]);
+    ];
+
+    // Data retention: if RETAIN_DAYS is set, purge old records to stay within
+    // D1 free-tier limits. Default: off (no auto-deletion). Recommended: 90 for
+    // page_views, 30 for engagement.
+    const retainDays = parseInt(env.RETAIN_DAYS, 10) || 0;
+    if (retainDays > 0) {
+      const viewCutoff = new Date(Date.now() - retainDays * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+      ops.push(
+        env.DB.prepare('DELETE FROM page_views WHERE created_at < ?').bind(viewCutoff).run(),
+        env.DB.prepare('DELETE FROM page_engagement WHERE created_at < ?').bind(viewCutoff).run()
+      );
+    }
+
+    const results = await Promise.all(ops);
+    const counts = results.map(r => (r && r.changes) || 0);
+    console.log(JSON.stringify({
+      event: 'scheduled',
+      rate_limits: counts[0] || 0,
+      sessions: counts[1] || 0,
+      views: counts[2] || 0,
+      engagement: counts[3] || 0,
+      retainDays: retainDays || 'off',
+    }));
   },
 };
 
@@ -718,19 +810,27 @@ async function handleMeta(request, env) {
   if (!session || !(await verifySessionToken(session, env))) {
     return Response.json({ error: 'unauthorized' }, { status: 401, headers: h });
   }
-  const [oldest, newest] = await Promise.all([
+  const [oldest, newest, pvCount, engCount] = await Promise.all([
     env.DB.prepare('SELECT created_at FROM page_views ORDER BY created_at ASC LIMIT 1').first(),
     env.DB.prepare('SELECT created_at FROM page_views ORDER BY created_at DESC LIMIT 1').first(),
+    env.DB.prepare('SELECT COUNT(*) AS c FROM page_views').first(),
+    env.DB.prepare('SELECT COUNT(*) AS c FROM page_engagement').first(),
   ]);
+  const retainDays = parseInt(env.RETAIN_DAYS, 10) || 0;
   return Response.json({
     version: VERSION,
-    uptime: 'since scheduled',
     compat: '2026-08-02',
     runtime: 'workers',
     data_range: {
       first: oldest?.created_at || null,
       last: newest?.created_at || null,
     },
+    counts: {
+      page_views: pvCount?.c || 0,
+      engagement: engCount?.c || 0,
+    },
+    retention: retainDays > 0 ? retainDays + 'd' : 'off',
+    uptime: process.uptime ? Math.floor(process.uptime()) + 's' : 'n/a',
   }, { headers: h });
 }
 
