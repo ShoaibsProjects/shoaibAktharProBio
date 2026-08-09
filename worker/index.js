@@ -1,4 +1,4 @@
-var VERSION = '3.19.0'; // bump when you change the worker code
+var VERSION = '3.19.1'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -1138,6 +1138,17 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
       + '<span class="ref-count">' + r.count + '</span></div>';
   }).join('') : '<p class="empty-state">No referrer data</p>';
 
+  // Engagement stat cards — only shown when there's actual engagement data
+  var engagementHtml = '';
+  if (engagement && engagement.sessions > 0) {
+    engagementHtml = '<div class="stats" style="margin-bottom:1.5rem">'
+      + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="statSessions">' + (engagement.sessions||0) + '</div><div class="stat-label">Sessions Tracked</div></div>'
+      + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></div><div class="stat-value" id="statAvg">' + fmtDur((engagement.avgDurationSec)||0) + '</div><div class="stat-label">Avg. Time on Page</div></div>'
+      + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">' + (engagement.topClicks||[]).length + '</div><div class="stat-label">Most-Clicked</div></div>'
+      + '<div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">' + ((engagement.topClicks||[]).slice(0,3).map(function(c){return esc(c.target)+' <strong>'+c.count+'</strong>';}).join(' &middot; ')||'—') + '</div></div>'
+      + '</div>';
+  }
+
   const recentRows = visits.map(v => {
     const ago = timeAgo(v.created_at);
     const recent = (Date.now() - new Date(v.created_at + 'Z').getTime()) < 3600000; // within last hour
@@ -1387,12 +1398,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="stat-value" id="statTotal">${totals.total}</div><div class="stat-label">Total Views</div></div>
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></div><div class="stat-value" id="statUnique">${totals.unique}</div><div class="stat-label">Unique Visitors</div></div>
   </div>
-  ${(engagement&&engagement.sessions>0) ? '<div class="stats" style="margin-bottom:1.5rem">
-    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="statSessions">${(engagement&&engagement.sessions)||0}</div><div class="stat-label">Sessions Tracked</div></div>
-    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></div><div class="stat-value" id="statAvg">${fmtDur((engagement&&engagement.avgDurationSec)||0)}</div><div class="stat-label">Avg. Time on Page</div></div>
-    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">${(engagement&&engagement.topClicks||[]).length}</div><div class="stat-label">Most-Clicked</div></div>
-    <div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">${(engagement&&engagement.topClicks||[]).slice(0,3).map(c=>esc(c.target)+' <strong>'+c.count+'</strong>').join(' &middot; ')||'—'}</div></div>
-  </div>' : ''}
+  ${engagementHtml}
 
   ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem"><h2>Visitor Profiles</h2><p style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem">Each card is one device/person. Same visitor ID = same browser/device.</p><div class="profile-grid" id="profileGrid">' + profiles.map(function(p,i){
     // Friendly label: OS+Browser + primary city
