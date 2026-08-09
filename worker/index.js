@@ -1,4 +1,4 @@
-var VERSION = '3.17.0'; // bump when you change the worker code
+var VERSION = '3.18.0'; // bump when you change the worker code
 
 export default {
   async fetch(request, env, ctx) {
@@ -133,6 +133,7 @@ const BOT_PATTERNS = [
   /postman/i, /httpclient/i, /okhttp/i, /headless/i, /phantomjs/i, /scrapy/i,
   /puppeteer/i, /playwright/i, /semrush/i, /ahrefs/i, /mj12bot/i, /dotbot/i,
   /gtmetrix/i, /pingdom/i, /uptimerobot/i, /lighthouse/i, /pagespeed/i, /headlesschrome/i,
+  /google-read-aloud/i, /google-lighthouse/i, /chrome-lighthouse/i,
 ];
 
 function isBot(ua) {
@@ -632,18 +633,16 @@ async function verifyTurnstile(request, env, token) {
 
 async function renderDashboard(db) {
   try {
-    const [totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers, engagement, profiles] = await Promise.all([
+    const [totals, topCountries, recentVisits, trend, referrers, engagement, profiles] = await Promise.all([
       queryStats(db),
       queryTopCountries(db),
       queryRecent(db),
-      querySeattleStats(db),
-      querySeattleAll(db),
       queryTrend(db, 30),
       queryTopReferrers(db),
       queryEngagement(db),
       queryVisitorProfiles(db),
     ]);
-    return dashboardHtml(totals, topCountries, recentVisits, seattleStats, seattleVisits, trend, referrers, engagement, profiles);
+    return dashboardHtml(totals, topCountries, recentVisits, trend, referrers, engagement, profiles);
   } catch (err) {
     console.error('renderDashboard error:', err.stack || err.message);
     return '<html><body><h1>500</h1><pre>' + (err.stack || err.message) + '</pre></body></html>';
@@ -674,19 +673,17 @@ async function handleStats(request, env) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: jsonHeaders });
   }
 
-  const [totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, engagement, profiles] = await Promise.all([
+  const [totals, topCountries, trend, referrers, recent, engagement, profiles] = await Promise.all([
     queryStats(env.DB),
     queryTopCountries(env.DB),
     queryTrend(env.DB, 30),
     queryTopReferrers(env.DB),
-    querySeattleStats(env.DB),
-    querySeattleAll(env.DB),
     queryRecent(env.DB),
     queryEngagement(env.DB),
     queryVisitorProfiles(env.DB),
   ]);
 
-  return Response.json({ totals, topCountries, trend, referrers, seattleStats, seattleVisits, recent, engagement, profiles }, { headers: jsonHeaders });
+  return Response.json({ totals, topCountries, trend, referrers, recent, engagement, profiles }, { headers: jsonHeaders });
 }
 
 // ── GET /health ──
@@ -1053,9 +1050,12 @@ ${hasTurnstile ? `<script>
       t.reset();
       return;
     }
-    // Token not ready (slow network / widget still rendering): wait for it,
-    // then retry once — otherwise mobile users hit "verification failed".
+    // Token not ready (slow network / mobile / widget still rendering): wait for it.
+    // On 3G/4G, Turnstile can take 10-15s. Poll up to 20s before giving up.
     e.preventDefault();
+    var btn = document.querySelector('button[type="submit"]');
+    var origText = btn ? btn.textContent : '';
+    if (btn) { btn.textContent = 'Verifying…'; btn.disabled = true; }
     var tries = 0;
     var timer = setInterval(function(){
       tries++;
@@ -1065,9 +1065,10 @@ ${hasTurnstile ? `<script>
         appendToken(document.getElementById('loginForm'), tk);
         window.turnstile.reset();
         document.getElementById('loginForm').submit();
-      } else if (tries > 25) { // ~5s timeout, then submit anyway
+      } else if (tries > 100) { // ~20s timeout
         clearInterval(timer);
-        document.getElementById('loginForm').submit();
+        if (btn) { btn.textContent = origText; btn.disabled = false; }
+        alert('Verification timed out. Please complete the challenge above and try again.');
       }
     }, 200);
   });
@@ -1108,7 +1109,7 @@ ${hasTurnstile ? `<script>
 </html>`;
 }
 
-function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, trend, referrers, engagement, profiles) {
+function dashboardHtml(totals, countries, visits, trend, referrers, engagement, profiles) {
   const trendMax = Math.max(1, ...trend.map(t => t.count));
   const trendPoints = trend.length ? trend.map((t, i) => {
     const x = (trend.length === 1) ? 50 : (i / (trend.length - 1)) * 100;
@@ -1124,39 +1125,17 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
       + '<div class="ref-bar"><div class="ref-fill" style="width:' + pct + '%"></div></div>'
       + '<span class="ref-count">' + r.count + '</span></div>';
   }).join('') : '<p class="empty-state">No referrer data</p>';
-  const seattleBanner = '<div class="seattle-banner"><h3>Seattle Visits — All Time</h3>'
-    + '<p>' + seattleStats.total + ' total views &middot; ' + seattleStats.unique + ' unique visitors &middot; '
-    + seattleStats.last30 + ' in last 30 days'
-    + (seattleStats.firstSeen ? ' &middot; first seen ' + formatTime(seattleStats.firstSeen) : '')
-    + (seattleStats.lastSeen ? ' &middot; <strong>last seen ' + timeAgo(seattleStats.lastSeen) + '</strong>' : '')
-    + '</p></div>';
-  const seattleRows = seattleVisits.length ? seattleVisits.map(v => {
-    const ago = timeAgo(v.created_at);
-    const loc = [v.city, v.region, v.country].filter(Boolean).join(', ') || '—';
-    const ispExtra = v.isp ? ' <span style="font-size:0.68rem;color:var(--muted)">' + esc(v.isp) + '</span>' : '';
-    const osParts = [v.os, v.browser].filter(Boolean);
-    const deviceLine = v.device_type ? ('<span class="badge" style="font-size:0.68rem">' + esc(v.device_type) + '</span> ') : '';
-    const osLine = osParts.length ? deviceLine + esc(osParts.join(' · ')) : (v.user_agent ? parseUA(v.user_agent) : '—');
-    const id = v.id || '';
-    return '<tr data-id="' + id + '"><td><div style="font-weight:500">' + formatTime(v.created_at) + '</div><div style="font-size:0.68rem;color:var(--muted)">' + ago + '</div></td>'
-      + '<td>' + esc(loc) + coordH(v) + ispExtra + '</td>'
-      + '<td>' + (v.referrer
-        ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 28) + '</a>'
-        : 'Direct') + '</td>'
-      + '<td style="font-size:0.78rem"><span class="badge">' + esc(v.device_type || 'Unknown') + '</span> ' + esc(osLine) + '</td>'
-      + '<td><span class="badge seattle">' + esc(v.visitor_id.slice(0, 8)) + '</span></td></tr>';
-  }).join('') : '<tr><td colspan="5" class="empty-state">No Seattle visits recorded yet</td></tr>';
+
   const recentRows = visits.map(v => {
-    const isSea = v.city === 'Seattle';
     const ago = timeAgo(v.created_at);
     const loc = [v.city, v.region, v.country].filter(Boolean).join(', ') || 'Unknown';
     const os = esc(v.os || '');
     const browser = esc(v.browser || '');
     const dev = esc(v.device_type || '');
-    const id = v.id || '';
-    return '<tr data-id="' + id + '"' + (isSea ? ' style="background:rgba(0,113,227,0.04)"' : '') + '>'
+    const vid = v.visitor_id || '';
+    return '<tr data-vid="' + vid + '">'
       + '<td><div>' + formatTime(v.created_at) + '</div><div style="font-size:0.7rem;color:var(--muted)">' + ago + '</div></td>'
-      + '<td>' + esc(loc) + coordH(v) + (isSea ? ' <span class="badge seattle">SEA</span>' : '') + '</td>'
+      + '<td>' + esc(loc) + coordH(v) + '</td>'
       + '<td style="font-size:0.78rem">' + (dev ? '<span class="badge">' + dev + '</span> ' : '') + ' ' + esc([os, browser].filter(Boolean).join(' · ') || '—') + '</td>'
       + '<td>' + (v.referrer
         ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 30) + '</a>'
@@ -1320,8 +1299,6 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   html[data-theme="dark"] tr:hover td{background:rgba(41,151,255,0.08)}
   .badge{display:inline-block;padding:3px 9px;border-radius:8px;font-size:0.68rem;font-weight:700;letter-spacing:0.02em;background:rgba(46,125,50,0.12);color:#2e7d32;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
   html[data-theme="dark"] .badge{background:rgba(129,199,132,0.16);color:#81c784}
-  .badge.seattle{background:rgba(21,101,192,0.12);color:#1565c0}
-  html[data-theme="dark"] .badge.seattle{background:rgba(100,181,246,0.18);color:#64b5f6}
   .profile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem;margin-top:0.5rem}
   .profile-card{position:relative;background:linear-gradient(150deg,rgba(255,255,255,0.6),rgba(255,255,255,0.25));border:1px solid var(--border);border-radius:var(--radius-md);padding:1.1rem;box-shadow:inset 0 1px 0 rgba(255,255,255,0.6);transition:transform 0.2s,box-shadow 0.2s}
   .profile-card:hover{transform:translateY(-2px);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 8px 24px rgba(0,80,180,0.12)}
@@ -1348,20 +1325,10 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   .table-scroll-y{max-height:520px;width:100%;overflow-y:auto;-webkit-overflow-scrolling:touch}
   .table-scroll-y table{box-shadow:none;border-radius:0}
   .table-scroll-y thead th{position:sticky;top:0;z-index:1}
-  .seattle-card{border-left:3px solid var(--accent)}
   .empty-state{color:var(--muted);font-size:0.85rem;text-align:center;padding:2rem 0}
   .auto-refresh{display:flex;align-items:center;gap:0.4rem;font-size:0.75rem;color:var(--muted);margin-top:1.5rem;text-align:center;justify-content:center}
   .dot{width:8px;height:8px;border-radius:50%;background:#34c759;display:inline-block;animation:pulse 2s infinite;box-shadow:0 0 0 4px rgba(52,199,89,0.15)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
-  .seattle-banner{position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(0,113,227,0.12),rgba(90,200,250,0.08));color:var(--accent);padding:1.25rem 1.5rem;border-radius:var(--radius-md);margin-bottom:1rem;
-    border:1px solid var(--border);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);
-    box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 12px rgba(0,113,227,0.08)}
-  .seattle-banner::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
-  html[data-theme="dark"] .seattle-banner{background:linear-gradient(135deg,rgba(41,151,255,0.16),rgba(100,181,246,0.10));color:#64b5f6;
-    box-shadow:inset 0 1px 0 rgba(255,255,255,0.18),0 2px 12px rgba(41,151,255,0.12)}
-  .seattle-banner h3{font-size:1.1rem;font-weight:700;margin-bottom:0.25rem;position:relative;z-index:1}
-  .seattle-banner p{font-size:0.8rem;font-weight:500;opacity:0.9;position:relative;z-index:1}
-  .seattle-banner::after{z-index:0}
   .search-wrap{position:relative;min-width:220px}
   .search-wrap input{width:100%;padding:0.5rem 0.9rem 0.5rem 2rem;border:1px solid var(--border);border-radius:var(--radius-sm);
     background:var(--glass-bg);color:var(--text);font-size:0.82rem;font-family:inherit;font-weight:500;outline:none;
@@ -1373,7 +1340,7 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   .search-wrap input::placeholder{color:var(--muted)}
   .search-icon{position:absolute;left:0.65rem;top:50%;transform:translateY(-50%);width:14px;height:14px;
     stroke:var(--muted);fill:none;stroke-width:2;stroke-linecap:round;pointer-events:none}
-  @media(max-width:600px){body{padding:1rem}.top-bar{top:0.5rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}.seattle-banner{padding:1rem}}
+  @media(max-width:600px){body{padding:1rem}.top-bar{top:0.5rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}}
   @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -1402,12 +1369,12 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="stat-value" id="statTotal">${totals.total}</div><div class="stat-label">Total Views</div></div>
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></div><div class="stat-value" id="statUnique">${totals.unique}</div><div class="stat-label">Unique Visitors</div></div>
   </div>
-  <div class="stats" style="margin-bottom:1.5rem">
+  ${(engagement&&engagement.sessions>0) ? '<div class="stats" style="margin-bottom:1.5rem">
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="statSessions">${(engagement&&engagement.sessions)||0}</div><div class="stat-label">Sessions Tracked</div></div>
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></div><div class="stat-value" id="statAvg">${fmtDur((engagement&&engagement.avgDurationSec)||0)}</div><div class="stat-label">Avg. Time on Page</div></div>
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">${(engagement&&engagement.topClicks||[]).length}</div><div class="stat-label">Most-Clicked</div></div>
     <div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">${(engagement&&engagement.topClicks||[]).slice(0,3).map(c=>esc(c.target)+' <strong>'+c.count+'</strong>').join(' &middot; ')||'—'}</div></div>
-  </div>
+  </div>' : ''}
 
   ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem"><h2>Visitor Profiles</h2><p style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem">Each box is one device/person. Same visitor ID = same device. Click merge to combine profiles you recognize as the same person.</p><div class="profile-grid" id="profileGrid">' + profiles.map(function(p,i){
     var devIcon = p.devices && p.devices[0] ? (p.devices[0].toLowerCase().indexOf('mobile')>=0 ? '📱' : p.devices[0].toLowerCase().indexOf('desktop')>=0 ? '💻' : '📲') : '📱';
@@ -1436,18 +1403,6 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   </div>
 
   ${countries.length ? '<div class="card"><h2>Top Countries</h2><div class="country-list" id="countryList">' + countryChips + '</div></div>' : ''}
-
-  <div class="card seattle-card">
-    <div id="seattleBanner">${seattleBanner}</div>
-    <div class="table-scroll-x">
-      <div class="table-scroll-y">
-        <table>
-<thead><tr><th>Time (CST)</th><th>Location · Coords</th><th>Source</th><th>Device · OS</th><th>Visitor</th></tr></thead>
-           <tbody id="seattleTbody">${seattleRows}</tbody>
-        </table>
-      </div>
-    </div>
-  </div>
 
   <div class="card">
     <div class="card-head">
@@ -1514,10 +1469,9 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
   function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
   // ── Search filter state ──
   var _allRecent=[];
-  function rowHtml(v,seattleStyle){
-    var isSea=v.city==='Seattle';
-    var id=v.id||'';
-    return '<tr data-id="'+id+'"'+(isSea?' style="background:rgba(0,113,227,0.04)"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+(isSea?' <span class="badge seattle">SEA</span>':'')+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';
+  function rowHtml(v){
+    var vid=v.visitor_id||'';
+    return '<tr data-vid="'+vid+'"><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH(vid.slice(0,8))+'</span></td></tr>';
   }
   function renderRecent(){
     var rt=document.getElementById('recentTbody');
@@ -1554,12 +1508,6 @@ function dashboardHtml(totals, countries, visits, seattleStats, seattleVisits, t
         var cl=document.getElementById('countryList');
         if(cl){var cx=d.topCountries||[];
           cl.innerHTML=cx.map(function(c){return '<span class="country-chip"><strong>'+c.count+'</strong> '+flagH(c.country)+' '+escH(c.country)+'</span>';}).join('');}
-        var sb=document.getElementById('seattleBanner');
-        if(sb&&d.seattleStats){var s=d.seattleStats;
-          sb.innerHTML='<div class="seattle-banner"><h3>Seattle Visits — All Time</h3><p>'+s.total+' total views &middot; '+s.unique+' unique visitors &middot; '+s.last30+' in last 30 days'+(s.firstSeen?' &middot; first seen '+fmtH(s.firstSeen):'')+(s.lastSeen?' &middot; <strong>last seen '+agoH(s.lastSeen)+'</strong>':'')+'</p></div>';}
-        var st=document.getElementById('seattleTbody');
-        if(st){var sv=d.seattleVisits||[];
-          st.innerHTML=sv.length?sv.map(function(v){var id=v.id||'';return '<tr data-id="'+id+'"><td><div style="font-weight:500">'+fmtH(v.created_at)+'</div><div style="font-size:0.68rem;color:var(--muted)">'+agoH(v.created_at)+'</div></td><td>'+locH(v)+ispH(v)+'</td><td>'+refLinkH(v.referrer,28)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td><span class="badge seattle">'+escH((v.visitor_id||'').slice(0,8))+'</span></td></tr>';}).join(''):'<tr><td colspan="5" class="empty-state">No Seattle visits recorded yet</td></tr>';}
         _allRecent=d.recent||[];
         renderRecent();
       })
