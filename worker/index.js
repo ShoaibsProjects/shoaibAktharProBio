@@ -1,4 +1,4 @@
-var VERSION = '3.21.0'; // bump when you change the worker code
+var VERSION = '3.22.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -1659,7 +1659,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     var cards=document.querySelectorAll('.profile-card');
     var ids=[];cards.forEach(function(c){var v=c.getAttribute('data-vid');if(v&&v!==src)ids.push(v);});
     if(!ids.length){alert('No other profiles to merge into.');return;}
-    var tgt=prompt('Merge '+src.slice(0,10)+' into:\n'+ids.map(function(v,i){return '  ['+i+'] '+v.slice(0,10);}).join('\n')+'\n\nEnter number or ID:',ids[0]);
+    var tgt=prompt('Merge '+src.slice(0,10)+' into:\\n'+ids.map(function(v,i){return '  ['+i+'] '+v.slice(0,10);}).join('\\n')+'\\n\\nEnter number or ID:',ids[0]);
     if(!tgt)return;
     // Accept either index or full ID
     var idx=parseInt(tgt,10);
