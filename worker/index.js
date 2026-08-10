@@ -1,4 +1,4 @@
-var VERSION = '3.25.0'; // bump when you change the worker code
+var VERSION = '3.26.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -368,7 +368,15 @@ async function handleLogVisit(request, env) {
   const cf = request.cf || {};
   const language = (request.headers.get('Accept-Language') || '').split(',')[0]?.trim() || null;
   const uaParsed = parseUADetailed(ua);
-  const { id: visitorId, fromCookie } = await getVisitorId(request, ua, language, cf);
+  let { id: visitorId, fromCookie } = await getVisitorId(request, ua, language, cf);
+  // Modern browsers (Chrome/Safari) block the cross-site Set-Cookie we issue here, so
+  // the tracker also persists the id it gets from this response in localStorage on the
+  // profile origin and echoes it back on every call. Prefer that id when the cookie
+  // wasn't delivered, so page views + engagement collapse onto one stable visitor.
+  const bodyVid = String(body.visitor_id || '');
+  if (!fromCookie && (UUID_RE.test(bodyVid) || FP_RE.test(bodyVid))) {
+    visitorId = bodyVid;
+  }
 
   // Hash the IP (SHA-256, first 12 hex chars) — privacy-preserving same-device signal.
   // If two visits share the same IP hash, they came from the same subnet/household.
@@ -404,14 +412,16 @@ async function handleLogVisit(request, env) {
 
   console.log(JSON.stringify({ event: 'visit', ip, city: cf.city || null, country: cf.country || null, known: fromCookie, vid: visitor_id_preview(visitorId) }));
 
-  const response = Response.json({ ok: true }, { headers: base });
+  const response = Response.json({ ok: true, visitor_id: visitorId }, { headers: base });
 
   // Always (re)issue the cookie so it survives cross-origin (Site=other, SameSite=None)
   // and persists for a year. Echo back the SAME id we just stored so future visits
   // from this browser collapse onto this row regardless of IP/network changes.
+  // Partitioned (CHIPS) keeps the cookie usable inside the profile page's third-party
+  // context even under Chrome/Safari's cross-site cookie blocking.
   response.headers.set(
     'Set-Cookie',
-    `${VID_COOKIE}=${visitorId}; Max-Age=31536000; Path=/; SameSite=None; Secure; HttpOnly`
+    `${VID_COOKIE}=${visitorId}; Max-Age=31536000; Path=/; SameSite=None; Secure; HttpOnly; Partitioned`
   );
 
   return response;
@@ -456,11 +466,17 @@ async function handleEvent(request, env) {
     return Response.json({ ok: false, reason: 'unauthorized' }, { status: 401, headers: base });
   }
 
-  // Identity comes from the cookie (validated by regex) — same fence as /log-visit
+  // Identity comes from the cookie (validated by regex) — same fence as /log-visit.
+  // The cross-site cookie is often blocked (Chrome/Safari), so fall back to the id the
+  // tracker persisted in localStorage and sent in the payload.
   const cookie = request.headers.get('Cookie') || '';
   const match = cookie.match(new RegExp(VID_COOKIE + '=([^;]+)'));
-  const vid = match ? match[1] : '';
-  if (!vid || !(UUID_RE.test(vid) || FP_RE.test(vid))) {
+  let vid = match ? match[1] : '';
+  const bodyVid = String(body.visitor_id || '');
+  if (!(UUID_RE.test(vid) || FP_RE.test(vid))) {
+    vid = (UUID_RE.test(bodyVid) || FP_RE.test(bodyVid)) ? bodyVid : '';
+  }
+  if (!vid) {
     return Response.json({ ok: false, reason: 'no_session' }, { status: 403, headers: base });
   }
 
