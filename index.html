@@ -1678,13 +1678,14 @@
             }
         });
 
-        // Clicks: delegated, throttled to one per second, max 10 coordinates
+        // Clicks: delegated, throttled to one per second
         var lastClick = 0;
         document.addEventListener('click', function (e) {
             var now = Date.now();
             if (now - lastClick < 1000) return; // throttle
             lastClick = now;
             var t = e.target;
+            if (!t || t.nodeType !== 1) t = (t && t.parentElement) ? t.parentElement : document.body;
             var label = (t.tagName || '').toLowerCase();
             if (t.id) label += '#' + t.id;
             if (t.getAttribute('role')) label += '[' + t.getAttribute('role') + ']';
@@ -1692,12 +1693,38 @@
                 var txt = t.textContent.trim().slice(0, 30);
                 if (txt) label += ' "' + txt + '"';
             }
+            // Which part of the page was clicked — nearest section heading
+            var section = '';
+            var sec = (typeof t.closest === 'function') ? t.closest('section') : null;
+            if (sec) {
+                var st = sec.querySelector ? sec.querySelector('.section-title') : null;
+                if (st && st.textContent) section = st.textContent.trim().slice(0, 40);
+                if (!section && sec.getAttribute('aria-label')) section = sec.getAttribute('aria-label').slice(0, 40);
+                if (!section && sec.id) section = sec.id.slice(0, 40);
+            }
+            if (!section) {
+                var up = t.parentElement;
+                while (up && up !== document.body) {
+                    if (up.id) { section = up.id.slice(0, 40); break; }
+                    up = up.parentElement;
+                }
+            }
+            if (!section) section = 'page';
+            // Element class (handles SVGAnimatedString on svg nodes)
+            var cls = (typeof t.className === 'string') ? t.className
+                : (t.className && t.className.baseVal) ? t.className.baseVal : '';
+            cls = String(cls).slice(0, 60);
+            var a = (typeof t.closest === 'function') ? t.closest('a') : null;
+            var href = (a && a.href) ? a.href.slice(0, 200) : '';
             post('/event', {
                 session_id: sid,
                 event_type: 'click',
                 x: e.clientX | 0,
                 y: e.clientY | 0,
-                target: label
+                target: label,
+                section: section,
+                cls: cls,
+                href: href
             });
         }, true);
 

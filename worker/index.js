@@ -1,4 +1,4 @@
-var VERSION = '3.24.0'; // bump when you change the worker code
+var VERSION = '3.25.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -478,10 +478,13 @@ async function handleEvent(request, env) {
     const y = Number.isFinite(Number(body.y)) ? Math.round(Number(body.y)) : null;
     const target = typeof body.target === 'string' ? body.target.slice(0, 200) : null;
     const extra = typeof body.extra === 'string' ? body.extra.slice(0, 200) : null;
+    const section = typeof body.section === 'string' ? body.section.slice(0, 80) : null;
+    const cls = typeof body.cls === 'string' ? body.cls.slice(0, 80) : null;
+    const href = typeof body.href === 'string' ? body.href.slice(0, 200) : null;
     await env.DB.prepare(
-      `INSERT INTO page_engagement (visitor_id, session_id, event_type, page_url, x, y, target, extra)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(vid, session_id || null, event_type, body.pageUrl || null, x, y, target, extra).run();
+      `INSERT INTO page_engagement (visitor_id, session_id, event_type, page_url, x, y, target, extra, section, cls, href)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(vid, session_id || null, event_type, body.pageUrl || null, x, y, target, extra, section, cls, href).run();
   } else {
     // heartbeat / pagehide / pageshow / focus — no x/y
     await env.DB.prepare(
@@ -917,11 +920,24 @@ async function queryEngagement(db) {
      LIMIT 8`
   ).all();
 
+  // Per-click log — newest first, with the visitor's latest known location
+  const { results: clickDetails } = await db.prepare(
+    `SELECT pe.created_at, pe.visitor_id, pe.target, pe.section, pe.cls, pe.href, pe.x, pe.y,
+            (SELECT v.city    FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS city,
+            (SELECT v.region  FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS region,
+            (SELECT v.country FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS country
+     FROM page_engagement pe
+     WHERE pe.event_type = 'click' AND pe.target IS NOT NULL AND pe.target != ''
+     ORDER BY pe.created_at DESC
+     LIMIT 60`
+  ).all();
+
   return {
     sessions: totalSessions,
     avgDurationSec: avgSec,
     recent: perSession.slice(0, 10),
     topClicks: clicks || [],
+    clickDetails: clickDetails || [],
   };
 }
 
@@ -1264,6 +1280,7 @@ const DASHBOARD_CLIENT_JS = String.raw`
   function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
   // ── Search filter state ──
   var _allRecent=[];
+  var _allClicks=[];
   function rowHtml(v){
     var vid=v.visitor_id||'';
     var isNew=(Date.now()-new Date(v.created_at+'Z').getTime())<3600000;
@@ -1280,6 +1297,21 @@ const DASHBOARD_CLIENT_JS = String.raw`
       return hay.indexOf(q)!==-1;
     });}
     rt.innerHTML=rv.length?rv.map(rowHtml).join(''):'<tr><td colspan="5" class="empty-state">No visits match your filter</td></tr>';
+  }
+  // ── Click detail rows (filled from /stats engagement.clickDetails) ──
+  function clickRowHtml(c){
+    var vid=c.visitor_id||'';
+    var sec=c.section?escH(truncH(c.section,28)):'—';
+    var tgt=c.target?escH(truncH(c.target,40)):'—';
+    var link='—';
+    if(c.href)link='<a href="'+escH(c.href)+'" target="_blank" rel="noreferrer" style="color:var(--accent);text-decoration:none;font-size:0.72rem">'+truncH(escH(String(c.href).replace(/^https?:\/\//,'')),24)+'</a>';
+    var pos=(c.x!=null&&c.y!=null)?c.x+','+c.y:'—';
+    return '<tr data-vid="'+vid+'"><td><div>'+fmtH(c.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(c.created_at)+'</div></td><td><span class="badge">'+escH(vid.slice(0,8))+'</span></td><td>'+locH(c)+'</td><td style="font-size:0.78rem">'+sec+'</td><td style="font-size:0.78rem">'+tgt+'</td><td>'+link+'</td><td style="font-size:0.72rem;color:var(--muted)">'+pos+'</td></tr>';
+  }
+  function renderClicks(){
+    var tb=document.getElementById('clickTbody');
+    if(!tb)return;
+    tb.innerHTML=_allClicks.length?_allClicks.map(clickRowHtml).join(''):'<tr><td colspan="7" class="empty-state">No click data yet — appears as visitors interact</td></tr>';
   }
   function refresh(){
     fetch('/stats',{headers:{'Accept':'application/json'}})
@@ -1306,6 +1338,8 @@ const DASHBOARD_CLIENT_JS = String.raw`
           cl.innerHTML=cx.map(function(c){return '<span class="country-chip"><strong>'+c.count+'</strong> '+flagH(c.country)+' '+escH(c.country)+'</span>';}).join('');}
         _allRecent=d.recent||[];
         renderRecent();
+        _allClicks=(d.engagement&&d.engagement.clickDetails)||[];
+        renderClicks();
         applyTracked();
         showTrackedAlert();
       })
@@ -1459,16 +1493,15 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
       + '<span class="ref-count">' + r.count + '</span></div>';
   }).join('') : '<p class="empty-state">No referrer data</p>';
 
-  // Engagement stat cards — only shown when there's actual engagement data
-  var engagementHtml = '';
-  if (engagement && engagement.sessions > 0) {
-    engagementHtml = '<div class="stats" style="margin-bottom:1.5rem">'
-      + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="statSessions">' + (engagement.sessions||0) + '</div><div class="stat-label">Sessions Tracked</div></div>'
-      + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></div><div class="stat-value" id="statAvg">' + fmtDur((engagement.avgDurationSec)||0) + '</div><div class="stat-label">Avg. Time on Page</div></div>'
-      + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">' + (engagement.topClicks||[]).length + '</div><div class="stat-label">Most-Clicked</div></div>'
-      + '<div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">' + ((engagement.topClicks||[]).slice(0,3).map(function(c){return esc(c.target)+' <strong>'+c.count+'</strong>';}).join(' &middot; ')||'—') + '</div><button class="reset-eng" type="button" title="Delete all click &amp; session tracking data">Reset</button></div>'
-      + '</div>';
-  }
+  // Engagement stat cards — always visible (show zeros when there's no data yet)
+  var eng = engagement || {};
+  var topClicks = eng.topClicks || [];
+  var engagementHtml = '<div class="stats" style="margin-bottom:1.5rem">'
+    + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="statSessions">' + (eng.sessions || 0) + '</div><div class="stat-label">Sessions Tracked</div></div>'
+    + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></div><div class="stat-value" id="statAvg">' + fmtDur(eng.avgDurationSec || 0) + '</div><div class="stat-label">Avg. Time on Page</div></div>'
+    + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">' + topClicks.length + '</div><div class="stat-label">Most-Clicked</div></div>'
+    + '<div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">' + (topClicks.slice(0, 3).map(function(c){ return esc(c.target) + ' <strong>' + c.count + '</strong>'; }).join(' &middot; ') || '—') + '</div><button class="reset-eng" type="button" title="Delete all click &amp; session tracking data">Reset</button></div>'
+    + '</div>';
 
   const recentRows = visits.map(v => {
     const ago = timeAgo(v.created_at);
@@ -1742,6 +1775,19 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></div><div class="stat-value" id="statUnique">${totals.unique}</div><div class="stat-label">Unique Visitors</div></div>
   </div>
   ${engagementHtml}
+
+  <div class="card" style="margin-bottom:1.5rem">
+    <div class="card-head">
+      <h2>Click Details</h2>
+      <span style="font-size:0.72rem;color:var(--muted)">Last 60 clicks &middot; tracked visitors glow gold</span>
+    </div>
+    <div class="table-scroll-x">
+      <table>
+        <thead><tr><th>Time (CST)</th><th>Visitor</th><th>Location</th><th>Section</th><th>Target</th><th>Link</th><th>Pos</th></tr></thead>
+        <tbody id="clickTbody"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
 
   ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem"><h2>Visitor Profiles</h2><p style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem">Click ★ Track to follow a visitor — they stay at the top with a golden glow.</p><div class="profile-grid tracked-section" id="profileGrid">' + profiles.map(function(p,i){
     var os = (p.oss && p.oss[0]) || '';
