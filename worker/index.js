@@ -1581,14 +1581,14 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   function fmtH(t){if(!t)return'';var d=new Date(t+'Z');return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true,timeZone:'America/Chicago'});}
   function uaH(ua){
     if(!ua)return'Unknown';
-    var b='Other';
-    if(/Edg\\//.test(ua))b='Edge';else if(/Chrome\\//.test(ua)&&!/Chromium\\//.test(ua))b='Chrome';
-    else if(/Firefox\\//.test(ua))b='Firefox';else if(/Safari\\//.test(ua)&&!/Chrome\\//.test(ua))b='Safari';
+    var b='Other',u=ua;
+    if(u.indexOf('Edg/')>=0)b='Edge';else if(u.indexOf('Chrome/')>=0&&u.indexOf('Chromium')<0)b='Chrome';
+    else if(u.indexOf('Firefox/')>=0)b='Firefox';else if(u.indexOf('Safari/')>=0&&u.indexOf('Chrome')<0)b='Safari';
     var os='Unknown';
-    if(/Windows NT 10/.test(ua))os='Windows';else if(/Mac OS X/.test(ua))os='macOS';
-    else if(/Android/.test(ua))os='Android';else if(/iPhone|iPad/.test(ua))os='iOS';
-    else if(/Linux/.test(ua))os='Linux';
-    return b+' · '+os+' · '+(/Mobi|Android|iPhone|iPad/.test(ua)?'Mobile':'Desktop');
+    if(u.indexOf('Windows NT 10')>=0)os='Windows';else if(u.indexOf('Mac OS X')>=0)os='macOS';
+    else if(u.indexOf('Android')>=0)os='Android';else if(u.indexOf('iPhone')>=0||u.indexOf('iPad')>=0)os='iOS';
+    else if(u.indexOf('Linux')>=0)os='Linux';
+    return b+' \u00b7 '+os+' \u00b7 '+((u.indexOf('Mobi')>=0||u.indexOf('Android')>=0||u.indexOf('iPhone')>=0||u.indexOf('iPad')>=0)?'Mobile':'Desktop');
   }
   function flagH(c){if(!c||c.length!==2)return'';var a=0x1F1E6-65+c.toUpperCase().charCodeAt(0),b=0x1F1E6-65+c.toUpperCase().charCodeAt(1);return String.fromCodePoint(a,b);}
   function refLinkH(r,n){return r?'<a href="'+escH(r)+'" rel="noreferrer" style="color:var(--accent);text-decoration:none">'+truncH(escH(r),n)+'</a>':'Direct';}
