@@ -1,4 +1,4 @@
-var VERSION = '3.22.0'; // bump when you change the worker code
+var VERSION = '3.23.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -1190,6 +1190,216 @@ ${hasTurnstile ? `<script>
 </html>`;
 }
 
+const DASHBOARD_CLIENT_JS = String.raw`
+  // ── Theme (localStorage with cookie fallback — mobile/private browsing blocks localStorage) ──
+  function readTheme(){
+    var t=null;
+    try{t=localStorage.getItem('dash-theme');}catch(e){}
+    if(!t){var m=document.cookie.match(/(?:^|;\s*)dash-theme=([^;]*)/);if(m)t=m[1];}
+    return t;
+  }
+  function writeTheme(t){
+    try{localStorage.setItem('dash-theme',t);}catch(e){}
+    document.cookie='dash-theme='+t+'; Max-Age=31536000; Path=/; SameSite=Lax';
+  }
+  function applyTheme(){
+    var m=window.matchMedia('(prefers-color-scheme: dark)');
+    var t=readTheme()||(m.matches?'dark':'light');
+    document.documentElement.setAttribute('data-theme',t);
+    document.getElementById('themeToggle').textContent=(t==='dark')?'Light':'Dark';
+    return t;
+  }
+  function toggleTheme(){
+    var next=applyTheme()==='dark'?'light':'dark';
+    document.documentElement.setAttribute('data-theme',next);
+    document.getElementById('themeToggle').textContent=next==='dark'?'Light':'Dark';
+    writeTheme(next);
+  }
+  // ── In-place data refresh (no page reloads — reloads were logging users out) ──
+  function escH(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function truncH(s,n){s=String(s);return s.length>n?s.slice(0,n)+'...':s;}
+  function fmtH(t){if(!t)return'';var d=new Date(t+'Z');return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true,timeZone:'America/Chicago'});}
+  function uaH(ua){
+    if(!ua)return'Unknown';
+    var b='Other',u=ua;
+    if(u.indexOf('Edg/')>=0)b='Edge';else if(u.indexOf('Chrome/')>=0&&u.indexOf('Chromium')<0)b='Chrome';
+    else if(u.indexOf('Firefox/')>=0)b='Firefox';else if(u.indexOf('Safari/')>=0&&u.indexOf('Chrome')<0)b='Safari';
+    var os='Unknown';
+    if(u.indexOf('Windows NT 10')>=0)os='Windows';else if(u.indexOf('Mac OS X')>=0)os='macOS';
+    else if(u.indexOf('Android')>=0)os='Android';else if(u.indexOf('iPhone')>=0||u.indexOf('iPad')>=0)os='iOS';
+    else if(u.indexOf('Linux')>=0)os='Linux';
+    return b+' \u00b7 '+os+' \u00b7 '+((u.indexOf('Mobi')>=0||u.indexOf('Android')>=0||u.indexOf('iPhone')>=0||u.indexOf('iPad')>=0)?'Mobile':'Desktop');
+  }
+  function flagH(c){if(!c||c.length!==2)return'';var a=0x1F1E6-65+c.toUpperCase().charCodeAt(0),b=0x1F1E6-65+c.toUpperCase().charCodeAt(1);return String.fromCodePoint(a,b);}
+  function refLinkH(r,n){return r?'<a href="'+escH(r)+'" rel="noreferrer" style="color:var(--accent);text-decoration:none">'+truncH(escH(r),n)+'</a>':'Direct';}
+  function agoH(t){if(!t)return'';var diff=Math.floor((Date.now()-new Date(t+'Z').getTime())/1000);if(diff<0)return'just now';if(diff<60)return diff+'s ago';if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';return Math.floor(diff/86400)+'d ago';}
+  function devH(v){var d=v.device_type||'Unknown';var o=v.os||'';var b=v.browser||'';var line=[o,b].filter(Boolean).join(' · ');return '<span class="badge">'+escH(d)+'</span>'+(line?' '+escH(line):(v.user_agent?(' '+escH(uaH(v.user_agent))):''));}
+  function locH(v){var base=escH([v.city,v.region,v.country].filter(Boolean).join(', ')||'—');var hasLat=v.latitude!=null&&v.latitude!=='',hasLon=v.longitude!=null&&v.longitude!=='';var lat=parseFloat(v.latitude),lon=parseFloat(v.longitude);var hasCoords=hasLat&&hasLon&&!isNaN(lat)&&!isNaN(lon);var bits=[];if(hasCoords)bits.push(lat.toFixed(5)+', '+lon.toFixed(5));if(v.postal_code)bits.push(escH(v.postal_code));if(!bits.length)return base;var out='<span style="font-size:0.68rem;color:var(--muted)">'+bits.join(' · ')+'</span>';if(hasCoords)out+=' <a href="https://www.google.com/maps/search/?api=1&query='+lat+','+lon+'" target="_blank" rel="noreferrer" style="color:var(--accent);font-size:0.68rem;text-decoration:none">map</a>';return base+'<div>'+out+'</div>';}
+  function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
+  // ── Search filter state ──
+  var _allRecent=[];
+  function rowHtml(v){
+    var vid=v.visitor_id||'';
+    var isNew=(Date.now()-new Date(v.created_at+'Z').getTime())<3600000;
+    return '<tr data-vid="'+vid+'"'+(isNew?' class="new-visit"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+(isNew?' <span class="badge-new">NEW</span>':'')+'</div></td><td>'+locH(v)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH(vid.slice(0,8))+'</span></td></tr>';
+  }
+  function renderRecent(){
+    var rt=document.getElementById('recentTbody');
+    if(!rt)return;
+    var q=(document.getElementById('recentSearch')||{}).value||'';
+    q=q.trim().toLowerCase();
+    var rv=_allRecent;
+    if(q){rv=rv.filter(function(v){
+      var hay=[v.city,v.region,v.country,v.device_type,v.os,v.browser,v.isp,v.postal_code,(v.visitor_id||'').slice(0,8),v.referrer].filter(Boolean).join(' ').toLowerCase();
+      return hay.indexOf(q)!==-1;
+    });}
+    rt.innerHTML=rv.length?rv.map(rowHtml).join(''):'<tr><td colspan="5" class="empty-state">No visits match your filter</td></tr>';
+  }
+  function refresh(){
+    fetch('/stats',{headers:{'Accept':'application/json'}})
+      .then(function(r){if(r.status===401){location.href='/dashboard';return null;}return r.json();})
+      .then(function(d){
+        if(!d)return;
+        var g=function(id,v){var el=document.getElementById(id);if(el)el.textContent=v;};
+        g('statToday',d.totals.today);g('stat24h',d.totals.last24h);g('statTotal',d.totals.total);g('statUnique',d.totals.unique);
+        var tr=d.trend||[];
+        if(tr.length){
+          var mx=Math.max.apply(null,tr.map(function(t){return t.count;}))||1;
+          var pts=tr.map(function(t,i){var x=tr.length===1?50:(i/(tr.length-1))*100;return x+','+(40-(t.count/mx)*38);}).join(' ');
+          var poly=document.getElementById('trendPoly');if(poly)poly.setAttribute('points','0,40 '+pts+' 100,40');
+          var dl=document.getElementById('trendDate');
+          if(dl)dl.innerHTML='<span>'+tr[0].date+'</span><span>Peak: '+mx+'</span><span>'+tr[tr.length-1].date+'</span>';
+        }
+        var ref=document.getElementById('refList');
+        if(ref){
+          var rx=d.referrers||[],rmax=Math.max(1,rx.length?rx[0].count:1);
+          ref.innerHTML=rx.length?rx.map(function(r){var pct=(r.count/rmax)*100;return '<div class="ref-item"><span class="ref-name">'+escH(r.source)+'</span><div class="ref-bar"><div class="ref-fill" style="width:'+pct+'%"></div></div><span class="ref-count">'+r.count+'</span></div>';}).join(''):'<p class="empty-state">No referrer data</p>';
+        }
+        var cl=document.getElementById('countryList');
+        if(cl){var cx=d.topCountries||[];
+          cl.innerHTML=cx.map(function(c){return '<span class="country-chip"><strong>'+c.count+'</strong> '+flagH(c.country)+' '+escH(c.country)+'</span>';}).join('');}
+        _allRecent=d.recent||[];
+        renderRecent();
+        applyTracked();
+        showTrackedAlert();
+      })
+      .catch(function(){});
+  }
+  applyTheme();
+  refresh();
+  setInterval(refresh,60000);
+  var si=document.getElementById('recentSearch');
+  if(si)si.addEventListener('input',renderRecent);
+
+  // Profile merge — one-click: shows input for target ID
+  document.addEventListener('click',function(e){
+    var btn=e.target.closest('.profile-merge');
+    if(!btn)return;
+    e.preventDefault();e.stopPropagation();
+    var src=btn.getAttribute('data-vid');
+    if(!src)return;
+    var cards=document.querySelectorAll('.profile-card');
+    var ids=[];cards.forEach(function(c){var v=c.getAttribute('data-vid');if(v&&v!==src)ids.push(v);});
+    if(!ids.length){alert('No other profiles to merge into.');return;}
+    var tgt=prompt('Merge '+src.slice(0,10)+' into:\n'+ids.map(function(v,i){return '  ['+i+'] '+v.slice(0,10);}).join('\n')+'\n\nEnter number or ID:',ids[0]);
+    if(!tgt)return;
+    // Accept either index or full ID
+    var idx=parseInt(tgt,10);
+    var target=(idx>=0&&idx<ids.length)?ids[idx]:tgt.trim();
+    if(target===src||ids.indexOf(target)<0){alert('Invalid target.');return;}
+    if(!confirm('MERGE: '+src.slice(0,10)+' → '+target.slice(0,10)+'?'))return;
+    btn.disabled=true;btn.textContent='…';
+    fetch('/api/merge-visitors',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src,target:target})})
+      .then(function(r){return r.json().catch(function(){return{ok:false}});})
+      .then(function(d){
+        if(d&&d.ok){window.location.reload();}
+        else{alert('Merge failed: '+(d&&d.error||'unknown'));btn.disabled=false;btn.textContent='merge';}
+      })
+       .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='merge';});
+  });
+
+  // ── Visitor tracking (localStorage, no backend) ──
+  var TRACK_KEY='dash-tracked';
+  function getTracked(){try{var v=localStorage.getItem(TRACK_KEY);return v?JSON.parse(v):[];}catch(e){return[];}}
+  function saveTracked(arr){try{localStorage.setItem(TRACK_KEY,JSON.stringify(arr));}catch(e){}}
+
+  // Apply tracked styles to profile cards and recent visit rows
+  function applyTracked(){
+    var t=getTracked();
+    // Profile cards
+    document.querySelectorAll('.profile-card').forEach(function(c){
+      var vid=c.getAttribute('data-vid');
+      var btn=c.querySelector('.track-btn');
+      if(t.indexOf(vid)>=0){c.classList.add('tracked');if(btn)btn.textContent='★ Tracked';}
+      else{if(btn)btn.textContent='☆ Track';}
+    });
+    // Recent visit rows
+    document.querySelectorAll('tr[data-vid]').forEach(function(r){
+      if(t.indexOf(r.getAttribute('data-vid'))>=0)r.classList.add('tracked-visit');
+    });
+  }
+
+  // Pin tracked cards to the top of the grid
+  function pinTracked(){
+    var grid=document.getElementById('profileGrid');
+    if(!grid)return;
+    var t=getTracked();
+    var cards=Array.from(grid.querySelectorAll('.profile-card'));
+    cards.sort(function(a,b){
+      var aT=t.indexOf(a.getAttribute('data-vid'))>=0?0:1;
+      var bT=t.indexOf(b.getAttribute('data-vid'))>=0?0:1;
+      return aT-bT;
+    });
+    cards.forEach(function(c){grid.appendChild(c);});
+  }
+
+  // Golden alert banner when a tracked visitor has been active in the last 24h
+  function showTrackedAlert(){
+    var el=document.getElementById('trackedAlert');
+    if(!el)return;
+    var t=getTracked();
+    if(!t.length){el.hidden=true;return;}
+    var now=Date.now(),WIN=24*3600000,best=null;
+    document.querySelectorAll('.profile-card[data-vid][data-lastseen]').forEach(function(c){
+      var vid=c.getAttribute('data-vid');
+      if(t.indexOf(vid)<0)return;
+      var ls=new Date(c.getAttribute('data-lastseen')+'Z').getTime();
+      if(isNaN(ls))return;
+      var age=now-ls;
+      if(age>=0&&age<WIN&&(!best||ls>best.ls)){
+        best={ls:ls,vid:vid,name:(c.querySelector('.profile-name')||{}).textContent||vid.slice(0,8)};
+      }
+    });
+    if(best){
+      var mins=Math.floor((now-best.ls)/60000);
+      var when=mins<1?'just now':mins<60?mins+'m ago':Math.floor(mins/60)+'h ago';
+      el.innerHTML='<span style="font-size:1.15rem;line-height:1">★</span> <span><strong>'+escH(best.name)+'</strong> visited '+when+'</span><button type="button" onclick="this.parentNode.hidden=true" title="Dismiss" style="margin-left:auto;background:none;border:none;color:inherit;font-size:1.1rem;cursor:pointer;line-height:1">&times;</button>';
+      el.hidden=false;
+    }else{el.hidden=true;}
+  }
+
+  // Click handler for track buttons
+  document.addEventListener('click',function(e){
+    var btn=e.target.closest('.track-btn');
+    if(!btn)return;
+    var vid=btn.getAttribute('data-vid');
+    if(!vid)return;
+    var t=getTracked();
+    var idx=t.indexOf(vid);
+    if(idx>=0){t.splice(idx,1);btn.textContent='☆ Track';}else{t.push(vid);btn.textContent='★ Tracked';}
+    saveTracked(t);
+    applyTracked();
+    pinTracked();
+    showTrackedAlert();
+  });
+
+  // On load: apply tracking, pin tracked cards to top, show any recent-visit alert
+  applyTracked();
+  pinTracked();
+  showTrackedAlert();
+
+`;
+
 function dashboardHtml(totals, countries, visits, trend, referrers, engagement, profiles) {
   const trendMax = Math.max(1, ...trend.map(t => t.count));
   const trendPoints = trend.length ? trend.map((t, i) => {
@@ -1422,6 +1632,13 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .profile-card.tracked .track-btn{background:rgba(245,158,11,0.15);color:#b45309;border-color:#f59e0b}
   html[data-theme="dark"] .profile-card.tracked{border-color:#fbbf24;box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 0 24px rgba(251,191,36,0.18)}
   html[data-theme="dark"] .profile-card.tracked .track-btn{background:rgba(251,191,36,0.2);color:#fde68a;border-color:#fbbf24}
+  .tracked-alert{display:flex;align-items:center;gap:0.6rem;margin:0 0 1rem;padding:0.75rem 1rem;border-radius:var(--radius-sm);
+    background:linear-gradient(150deg,rgba(245,158,11,0.16),rgba(251,191,36,0.08));border:1px solid rgba(245,158,11,0.5);
+    box-shadow:0 0 24px rgba(245,158,11,0.18),inset 0 1px 0 rgba(255,255,255,0.4);
+    backdrop-filter:blur(30px) saturate(200%);-webkit-backdrop-filter:blur(30px) saturate(200%);
+    font-size:0.85rem;font-weight:600;color:#92400e;animation:pulse-new 3s ease-in-out infinite}
+  html[data-theme="dark"] .tracked-alert{color:#fde68a;background:linear-gradient(150deg,rgba(251,191,36,0.18),rgba(251,191,36,0.06))}
+  .tracked-alert[hidden]{display:none}
   tr.tracked-visit td{background:rgba(245,158,11,0.06)}
   html[data-theme="dark"] tr.tracked-visit td{background:rgba(251,191,36,0.08)}
   .tracked-section h2::after{content:' ⚡ Tracked';font-size:0.7rem;color:#f59e0b;font-weight:600;vertical-align:middle}
@@ -1461,6 +1678,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
 </defs></svg>
 <div class="aurora-layer" aria-hidden="true"></div>
 <div class="container">
+  <div class="tracked-alert" id="trackedAlert" hidden></div>
   <div class="top-bar">
     <div>
       <h1>Page View Dashboard</h1>
@@ -1512,7 +1730,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     var ipList = p.ipHashes && p.ipHashes.filter(Boolean).map(function(h){return h.slice(0,8)}).join(', ') || '';
     var citiesStr = p.cities.slice(0,3).join(', ') + (p.cities.length>3 ? ' +'+(p.cities.length-3) : '');
     var times = p.timezones && p.timezones.filter(Boolean).join(', ') || '';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div><div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div><div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
   }).join('') + '</div></div>' : ''}
 
   <div class="grid-2">
@@ -1551,180 +1769,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   <div class="auto-refresh"><span class="dot"></span> Auto-refreshes every 60s &middot; All times in CST</div>
 </div>
 <script>
-  // ── Theme (localStorage with cookie fallback — mobile/private browsing blocks localStorage) ──
-  function readTheme(){
-    var t=null;
-    try{t=localStorage.getItem('dash-theme');}catch(e){}
-    if(!t){var m=document.cookie.match(/(?:^|;\\s*)dash-theme=([^;]*)/);if(m)t=m[1];}
-    return t;
-  }
-  function writeTheme(t){
-    try{localStorage.setItem('dash-theme',t);}catch(e){}
-    document.cookie='dash-theme='+t+'; Max-Age=31536000; Path=/; SameSite=Lax';
-  }
-  function applyTheme(){
-    var m=window.matchMedia('(prefers-color-scheme: dark)');
-    var t=readTheme()||(m.matches?'dark':'light');
-    document.documentElement.setAttribute('data-theme',t);
-    document.getElementById('themeToggle').textContent=(t==='dark')?'Light':'Dark';
-    return t;
-  }
-  function toggleTheme(){
-    var next=applyTheme()==='dark'?'light':'dark';
-    document.documentElement.setAttribute('data-theme',next);
-    document.getElementById('themeToggle').textContent=next==='dark'?'Light':'Dark';
-    writeTheme(next);
-  }
-  // ── In-place data refresh (no page reloads — reloads were logging users out) ──
-  function escH(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-  function truncH(s,n){s=String(s);return s.length>n?s.slice(0,n)+'...':s;}
-  function fmtH(t){if(!t)return'';var d=new Date(t+'Z');return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true,timeZone:'America/Chicago'});}
-  function uaH(ua){
-    if(!ua)return'Unknown';
-    var b='Other',u=ua;
-    if(u.indexOf('Edg/')>=0)b='Edge';else if(u.indexOf('Chrome/')>=0&&u.indexOf('Chromium')<0)b='Chrome';
-    else if(u.indexOf('Firefox/')>=0)b='Firefox';else if(u.indexOf('Safari/')>=0&&u.indexOf('Chrome')<0)b='Safari';
-    var os='Unknown';
-    if(u.indexOf('Windows NT 10')>=0)os='Windows';else if(u.indexOf('Mac OS X')>=0)os='macOS';
-    else if(u.indexOf('Android')>=0)os='Android';else if(u.indexOf('iPhone')>=0||u.indexOf('iPad')>=0)os='iOS';
-    else if(u.indexOf('Linux')>=0)os='Linux';
-    return b+' \u00b7 '+os+' \u00b7 '+((u.indexOf('Mobi')>=0||u.indexOf('Android')>=0||u.indexOf('iPhone')>=0||u.indexOf('iPad')>=0)?'Mobile':'Desktop');
-  }
-  function flagH(c){if(!c||c.length!==2)return'';var a=0x1F1E6-65+c.toUpperCase().charCodeAt(0),b=0x1F1E6-65+c.toUpperCase().charCodeAt(1);return String.fromCodePoint(a,b);}
-  function refLinkH(r,n){return r?'<a href="'+escH(r)+'" rel="noreferrer" style="color:var(--accent);text-decoration:none">'+truncH(escH(r),n)+'</a>':'Direct';}
-  function agoH(t){if(!t)return'';var diff=Math.floor((Date.now()-new Date(t+'Z').getTime())/1000);if(diff<0)return'just now';if(diff<60)return diff+'s ago';if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';return Math.floor(diff/86400)+'d ago';}
-  function devH(v){var d=v.device_type||'Unknown';var o=v.os||'';var b=v.browser||'';var line=[o,b].filter(Boolean).join(' · ');return '<span class="badge">'+escH(d)+'</span>'+(line?' '+escH(line):(v.user_agent?(' '+escH(uaH(v.user_agent))):''));}
-  function locH(v){var base=escH([v.city,v.region,v.country].filter(Boolean).join(', ')||'—');var hasLat=v.latitude!=null&&v.latitude!=='',hasLon=v.longitude!=null&&v.longitude!=='';var lat=parseFloat(v.latitude),lon=parseFloat(v.longitude);var hasCoords=hasLat&&hasLon&&!isNaN(lat)&&!isNaN(lon);var bits=[];if(hasCoords)bits.push(lat.toFixed(5)+', '+lon.toFixed(5));if(v.postal_code)bits.push(escH(v.postal_code));if(!bits.length)return base;var out='<span style="font-size:0.68rem;color:var(--muted)">'+bits.join(' · ')+'</span>';if(hasCoords)out+=' <a href="https://www.google.com/maps/search/?api=1&query='+lat+','+lon+'" target="_blank" rel="noreferrer" style="color:var(--accent);font-size:0.68rem;text-decoration:none">map</a>';return base+'<div>'+out+'</div>';}
-  function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
-  // ── Search filter state ──
-  var _allRecent=[];
-  function rowHtml(v){
-    var vid=v.visitor_id||'';
-    var isNew=(Date.now()-new Date(v.created_at+'Z').getTime())<3600000;
-    return '<tr data-vid="'+vid+'"'+(isNew?' class="new-visit"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+(isNew?' <span class="badge-new">NEW</span>':'')+'</div></td><td>'+locH(v)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH(vid.slice(0,8))+'</span></td></tr>';
-  }
-  function renderRecent(){
-    var rt=document.getElementById('recentTbody');
-    if(!rt)return;
-    var q=(document.getElementById('recentSearch')||{}).value||'';
-    q=q.trim().toLowerCase();
-    var rv=_allRecent;
-    if(q){rv=rv.filter(function(v){
-      var hay=[v.city,v.region,v.country,v.device_type,v.os,v.browser,v.isp,v.postal_code,(v.visitor_id||'').slice(0,8),v.referrer].filter(Boolean).join(' ').toLowerCase();
-      return hay.indexOf(q)!==-1;
-    });}
-    rt.innerHTML=rv.length?rv.map(rowHtml).join(''):'<tr><td colspan="5" class="empty-state">No visits match your filter</td></tr>';
-  }
-  function refresh(){
-    fetch('/stats',{headers:{'Accept':'application/json'}})
-      .then(function(r){if(r.status===401){location.href='/dashboard';return null;}return r.json();})
-      .then(function(d){
-        if(!d)return;
-        var g=function(id,v){var el=document.getElementById(id);if(el)el.textContent=v;};
-        g('statToday',d.totals.today);g('stat24h',d.totals.last24h);g('statTotal',d.totals.total);g('statUnique',d.totals.unique);
-        var tr=d.trend||[];
-        if(tr.length){
-          var mx=Math.max.apply(null,tr.map(function(t){return t.count;}))||1;
-          var pts=tr.map(function(t,i){var x=tr.length===1?50:(i/(tr.length-1))*100;return x+','+(40-(t.count/mx)*38);}).join(' ');
-          var poly=document.getElementById('trendPoly');if(poly)poly.setAttribute('points','0,40 '+pts+' 100,40');
-          var dl=document.getElementById('trendDate');
-          if(dl)dl.innerHTML='<span>'+tr[0].date+'</span><span>Peak: '+mx+'</span><span>'+tr[tr.length-1].date+'</span>';
-        }
-        var ref=document.getElementById('refList');
-        if(ref){
-          var rx=d.referrers||[],rmax=Math.max(1,rx.length?rx[0].count:1);
-          ref.innerHTML=rx.length?rx.map(function(r){var pct=(r.count/rmax)*100;return '<div class="ref-item"><span class="ref-name">'+escH(r.source)+'</span><div class="ref-bar"><div class="ref-fill" style="width:'+pct+'%"></div></div><span class="ref-count">'+r.count+'</span></div>';}).join(''):'<p class="empty-state">No referrer data</p>';
-        }
-        var cl=document.getElementById('countryList');
-        if(cl){var cx=d.topCountries||[];
-          cl.innerHTML=cx.map(function(c){return '<span class="country-chip"><strong>'+c.count+'</strong> '+flagH(c.country)+' '+escH(c.country)+'</span>';}).join('');}
-        _allRecent=d.recent||[];
-        renderRecent();
-      })
-      .catch(function(){});
-  }
-  applyTheme();
-  refresh();
-  setInterval(refresh,60000);
-  var si=document.getElementById('recentSearch');
-  if(si)si.addEventListener('input',renderRecent);
-
-  // Profile merge — one-click: shows input for target ID
-  document.addEventListener('click',function(e){
-    var btn=e.target.closest('.profile-merge');
-    if(!btn)return;
-    e.preventDefault();e.stopPropagation();
-    var src=btn.getAttribute('data-vid');
-    if(!src)return;
-    var cards=document.querySelectorAll('.profile-card');
-    var ids=[];cards.forEach(function(c){var v=c.getAttribute('data-vid');if(v&&v!==src)ids.push(v);});
-    if(!ids.length){alert('No other profiles to merge into.');return;}
-    var tgt=prompt('Merge '+src.slice(0,10)+' into:\\n'+ids.map(function(v,i){return '  ['+i+'] '+v.slice(0,10);}).join('\\n')+'\\n\\nEnter number or ID:',ids[0]);
-    if(!tgt)return;
-    // Accept either index or full ID
-    var idx=parseInt(tgt,10);
-    var target=(idx>=0&&idx<ids.length)?ids[idx]:tgt.trim();
-    if(target===src||ids.indexOf(target)<0){alert('Invalid target.');return;}
-    if(!confirm('MERGE: '+src.slice(0,10)+' → '+target.slice(0,10)+'?'))return;
-    btn.disabled=true;btn.textContent='…';
-    fetch('/api/merge-visitors',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src,target:target})})
-      .then(function(r){return r.json().catch(function(){return{ok:false}});})
-      .then(function(d){
-        if(d&&d.ok){window.location.reload();}
-        else{alert('Merge failed: '+(d&&d.error||'unknown'));btn.disabled=false;btn.textContent='merge';}
-      })
-       .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='merge';});
-  });
-
-  // ── Visitor tracking (localStorage, no backend) ──
-  var TRACK_KEY='dash-tracked';
-  function getTracked(){try{var v=localStorage.getItem(TRACK_KEY);return v?JSON.parse(v):[];}catch(e){return[];}}
-  function saveTracked(arr){try{localStorage.setItem(TRACK_KEY,JSON.stringify(arr));}catch(e){}}
-
-  // Apply tracked styles to profile cards and recent visit rows
-  function applyTracked(){
-    var t=getTracked();
-    // Profile cards
-    document.querySelectorAll('.profile-card').forEach(function(c){
-      var vid=c.getAttribute('data-vid');
-      var btn=c.querySelector('.track-btn');
-      if(t.indexOf(vid)>=0){c.classList.add('tracked');if(btn)btn.textContent='★ Tracked';}
-      else{if(btn)btn.textContent='☆ Track';}
-    });
-    // Recent visit rows
-    document.querySelectorAll('tr[data-vid]').forEach(function(r){
-      if(t.indexOf(r.getAttribute('data-vid'))>=0)r.classList.add('tracked-visit');
-    });
-  }
-
-  // Click handler for track buttons
-  document.addEventListener('click',function(e){
-    var btn=e.target.closest('.track-btn');
-    if(!btn)return;
-    var vid=btn.getAttribute('data-vid');
-    if(!vid)return;
-    var t=getTracked();
-    var idx=t.indexOf(vid);
-    if(idx>=0){t.splice(idx,1);btn.textContent='☆ Track';}else{t.push(vid);btn.textContent='★ Tracked';}
-    saveTracked(t);
-    applyTracked();
-  });
-
-  // On load: apply tracking, then move tracked cards to top
-  applyTracked();
-  (function(){
-    var grid=document.getElementById('profileGrid');
-    if(!grid)return;
-    var cards=Array.from(grid.querySelectorAll('.profile-card'));
-    var t=getTracked();
-    cards.sort(function(a,b){
-      var aT=t.indexOf(a.getAttribute('data-vid'))>=0?0:1;
-      var bT=t.indexOf(b.getAttribute('data-vid'))>=0?0:1;
-      return aT-bT;
-    });
-    cards.forEach(function(c){grid.appendChild(c);});
-  })();
-
+${DASHBOARD_CLIENT_JS}
 </script>
 </body>
 </html>`;
