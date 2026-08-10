@@ -1624,24 +1624,47 @@
         var LOG_KEY = 'pv_b94dc26a696d248c905550a485ac8717';
         var pageUrl = location.href;
 
-        function post(path, payload) {
+        // Stable visitor id, persisted on THIS origin (localStorage is first-party, so it
+        // survives third-party cookie blocking that drops the worker's cross-site cookie).
+        // The server assigns the id on /log-visit and we echo it back on every call.
+        var vid = null;
+        try { vid = localStorage.getItem('_pv_vid') || null; } catch (e) {}
+
+        function post(path, payload, cb) {
             try {
                 payload.key = LOG_KEY;
                 payload.pageUrl = pageUrl;
+                if (vid) payload.visitor_id = vid;
                 fetch(WORKER_URL + path, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
                     keepalive: true,
                     credentials: 'include'
-                }).catch(function(){});
-            } catch (e) {}
+                }).then(function (r) {
+                    if (cb) r.json().then(function (j) { cb(j); }).catch(function () { cb(null); });
+                }).catch(function () { if (cb) cb(null); });
+            } catch (e) { if (cb) cb(null); }
         }
 
         // One pageview per tab session
         if (!sessionStorage.getItem('_pv_logged')) {
             sessionStorage.setItem('_pv_logged', '1');
-            post('/log-visit', { referrer: document.referrer || null });
+            post('/log-visit', { referrer: document.referrer || null }, function (res) {
+                if (res && res.visitor_id && /^fp-[0-9a-f]{12}$/.test(res.visitor_id)) {
+                    vid = res.visitor_id;
+                    try { localStorage.setItem('_pv_vid', vid); } catch (e) {}
+                } else {
+                    // Server unreachable — fall back to a client-side id so engagement still works.
+                    var r = '', i;
+                    for (i = 0; i < 12; i++) r += (Math.random() * 16 | 0).toString(16);
+                    vid = 'fp-' + r;
+                    try { localStorage.setItem('_pv_vid', vid); } catch (e) {}
+                }
+                startBeat();
+            });
+        } else {
+            startBeat();
         }
 
         // Engagement: session id persists across reloads within the same tab
@@ -1732,8 +1755,6 @@
         window.addEventListener('pagehide', function () {
             post('/event', { session_id: sid, event_type: 'pagehide' });
         });
-
-        startBeat();
     })();
     </script>
 </body>
