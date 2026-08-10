@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS page_engagement (
   x INTEGER,
   y INTEGER,
   target TEXT,
-  extra TEXT
+  extra TEXT,
+  section TEXT,
+  cls TEXT,
+  href TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_eng_visitor ON page_engagement(visitor_id);
