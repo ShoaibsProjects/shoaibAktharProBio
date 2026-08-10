@@ -1,4 +1,4 @@
-var VERSION = '3.23.0'; // bump when you change the worker code
+var VERSION = '3.24.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -93,6 +93,8 @@ export default {
         response = await handleEvent(request, env);
       } else if (path === '/api/merge-visitors') {
         response = await handleMergeVisitors(request, env);
+      } else if (path === '/api/reset-engagement') {
+        response = await handleResetEngagement(request, env);
       } else if (path === '/meta') {
         response = await handleMeta(request, env);
       } else {
@@ -545,6 +547,30 @@ async function handleMergeVisitors(request, env) {
 
   console.log(JSON.stringify({ event: 'visitors_merged', source, target, visits: merged, engagement: engMerged }));
   return Response.json({ ok: true, merged, engagement: engMerged, source, target }, { headers: h });
+}
+
+// Reset all engagement data (clicks, heartbeats, pagehides, sessions). Session-authenticated.
+async function handleResetEngagement(request, env) {
+  const h = securityHeaders({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
+  if (request.method !== 'POST') return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: h });
+
+  // CSRF: only accept requests originated from our own dashboard
+  const origin = request.headers.get('Origin') || '';
+  const host = request.headers.get('Host') || '';
+  if (origin && !origin.includes('pageview-logger') && !host.includes('pageview-logger')) {
+    return Response.json({ error: 'forbidden' }, { status: 403, headers: h });
+  }
+
+  const session = sessionTokenFrom(request.headers.get('Cookie') || '');
+  if (!session || !(await verifySessionToken(session, env))) {
+    return Response.json({ error: 'unauthorized' }, { status: 401, headers: h });
+  }
+
+  const r = await env.DB.prepare('DELETE FROM page_engagement').run();
+  const deleted = (r && r.changes) || 0;
+  console.log(JSON.stringify({ event: 'engagement_reset', deleted }));
+  return Response.json({ ok: true, deleted }, { headers: h });
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1318,6 +1344,22 @@ const DASHBOARD_CLIENT_JS = String.raw`
        .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='merge';});
   });
 
+  // ── Reset engagement data (clicks, heartbeats, sessions) ──
+  document.addEventListener('click',function(e){
+    var btn=e.target.closest('.reset-eng');
+    if(!btn)return;
+    e.preventDefault();e.stopPropagation();
+    if(!confirm('Delete ALL click and session tracking data? This cannot be undone.'))return;
+    btn.disabled=true;btn.textContent='Resetting…';
+    fetch('/api/reset-engagement',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'}})
+      .then(function(r){return r.json().catch(function(){return{ok:false}});})
+      .then(function(d){
+        if(d&&d.ok){location.reload();}
+        else{alert('Reset failed: '+(d&&d.error||'unknown'));btn.disabled=false;btn.textContent='Reset';}
+      })
+      .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='Reset';});
+  });
+
   // ── Visitor tracking (localStorage, no backend) ──
   var TRACK_KEY='dash-tracked';
   function getTracked(){try{var v=localStorage.getItem(TRACK_KEY);return v?JSON.parse(v):[];}catch(e){return[];}}
@@ -1424,7 +1466,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
       + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="statSessions">' + (engagement.sessions||0) + '</div><div class="stat-label">Sessions Tracked</div></div>'
       + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></div><div class="stat-value" id="statAvg">' + fmtDur((engagement.avgDurationSec)||0) + '</div><div class="stat-label">Avg. Time on Page</div></div>'
       + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">' + (engagement.topClicks||[]).length + '</div><div class="stat-label">Most-Clicked</div></div>'
-      + '<div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">' + ((engagement.topClicks||[]).slice(0,3).map(function(c){return esc(c.target)+' <strong>'+c.count+'</strong>';}).join(' &middot; ')||'—') + '</div></div>'
+      + '<div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">' + ((engagement.topClicks||[]).slice(0,3).map(function(c){return esc(c.target)+' <strong>'+c.count+'</strong>';}).join(' &middot; ')||'—') + '</div><button class="reset-eng" type="button" title="Delete all click &amp; session tracking data">Reset</button></div>'
       + '</div>';
   }
 
@@ -1628,6 +1670,10 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   html[data-theme="dark"] .profile-merge{background:rgba(255,255,255,0.06)}
   .track-btn{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
   .track-btn:hover{border-color:#f59e0b;color:#b45309;background:rgba(245,158,11,0.1)}
+  .reset-eng{align-self:flex-start;margin-top:0.5rem;font-size:0.66rem;padding:3px 10px;border-radius:8px;border:1px solid rgba(211,47,47,0.4);background:rgba(211,47,47,0.06);cursor:pointer;font-weight:600;letter-spacing:0.03em;color:#c62828;transition:all 0.15s}
+  .reset-eng:hover{background:rgba(211,47,47,0.12);border-color:#c62828}
+  html[data-theme="dark"] .reset-eng{color:#ef9a9a;border-color:rgba(239,154,154,0.4);background:rgba(211,47,47,0.15)}
+  html[data-theme="dark"] .reset-eng:hover{background:rgba(211,47,47,0.25)}
   .profile-card.tracked{border:2px solid #f59e0b;box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 0 24px rgba(245,158,11,0.15),0 8px 32px rgba(0,0,0,0.08)}
   .profile-card.tracked .track-btn{background:rgba(245,158,11,0.15);color:#b45309;border-color:#f59e0b}
   html[data-theme="dark"] .profile-card.tracked{border-color:#fbbf24;box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 0 24px rgba(251,191,36,0.18)}
