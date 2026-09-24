@@ -1,4 +1,4 @@
-var VERSION = '3.27.0'; // bump when you change the worker code
+var VERSION = '3.27.1'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -1366,7 +1366,11 @@ const DASHBOARD_CLIENT_JS = String.raw`
   }
   applyTheme();
   var _sd=window.__DASH;
-  if(_sd){_allRecent=_sd.recent||[];_allClicks=_sd.clicks||[];renderClicks();}
+  if(_sd){_allRecent=_sd.recent||[];_allClicks=_sd.clicks||[];renderClicks();
+    _dashSig=((_sd.recent&&_sd.recent[0])?_sd.recent[0].created_at:'')+'|'+(_sd.recent?_sd.recent.length:0)
+      +'|'+((_sd.clicks&&_sd.clicks[0])?_sd.clicks[0].created_at:'')+'|'+(_sd.clicks?_sd.clicks.length:0)
+      +'|'+(_sd.refSig||'0|0')+'|'+(_sd.ccSig||'0|0');
+  }
   else{refresh();}
   setInterval(refresh,60000);
   var si=document.getElementById('recentSearch');
@@ -1525,11 +1529,14 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     + '</div>';
 
   // Server-known data seeded inline (slim) so the client can skip the on-load /stats re-fetch
+  const refSig = ((referrers && referrers[0] && referrers[0].count) || 0) + '|' + (referrers ? referrers.length : 0);
+  const ccSig = ((countries && countries[0] && countries[0].count) || 0) + '|' + (countries ? countries.length : 0);
   const dashSeed = JSON.stringify({
     recent: visits.map(v => ({ created_at: v.created_at, city: v.city, region: v.region, country: v.country,
       referrer: v.referrer, visitor_id: v.visitor_id, device_type: v.device_type, os: v.os, browser: v.browser,
       isp: v.isp, postal_code: v.postal_code, latitude: v.latitude, longitude: v.longitude })),
-    clicks: (engagement && engagement.clickDetails) || []
+    clicks: (engagement && engagement.clickDetails) || [],
+    refSig: refSig, ccSig: ccSig
   }).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 
   const recentRows = visits.map(v => {
