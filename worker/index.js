@@ -1,4 +1,4 @@
-var VERSION = '3.26.0'; // bump when you change the worker code
+var VERSION = '3.27.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -1082,12 +1082,6 @@ function loginPage(msg, env) {
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E📊%3C/text%3E%3C/svg%3E">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
-<svg style="position:fixed;width:0;height:0" aria-hidden="true"><defs>
-<filter id="lg-login" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
-<feTurbulence type="fractalNoise" baseFrequency="0.01 0.014" numOctaves="2" seed="12" result="noise"/>
-<feDisplacementMap in="SourceGraphic" in2="noise" scale="16" xChannelSelector="R" yChannelSelector="G"/>
-</filter>
-</defs></svg>
 <style>
   *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
   :root{--bg:#eef0f6;--surface:rgba(255,255,255,0.6);--text:#1d1d1f;--muted:#86868b;--accent:#0071e3;
@@ -1115,8 +1109,8 @@ function loginPage(msg, env) {
       radial-gradient(800px 550px at 92% 5%,#ecd9ff 0%,transparent 48%),
       radial-gradient(900px 600px at 50% 95%,#d0f5e0 0%,transparent 50%),
       linear-gradient(160deg,#eef2fb 0%,#e8ecf6 100%);
-    animation:aurora 28s ease-in-out infinite alternate}
-  body::after{background:radial-gradient(50% 35% at 50% 0%,rgba(255,255,255,0.7) 0%,transparent 70%);animation:aurora-glow 20s ease-in-out infinite alternate;mix-blend-mode:overlay}
+    animation:none}
+  body::after{background:radial-gradient(50% 35% at 50% 0%,rgba(255,255,255,0.7) 0%,transparent 70%);animation:none;mix-blend-mode:overlay}
   html[data-theme="dark"] body::before{
     background:
       radial-gradient(700px 500px at 10% 0%,rgba(25,80,170,0.3) 0%,transparent 50%),
@@ -1128,7 +1122,7 @@ function loginPage(msg, env) {
   @keyframes aurora-glow{0%{opacity:0.5}100%{opacity:0.95}}
   @keyframes fadeInUp{0%{opacity:0;transform:translateY(12px) scale(0.998)}50%{opacity:1}100%{opacity:1;transform:translateY(0) scale(1)}}
   h1{background:linear-gradient(115deg,var(--text) 35%,var(--muted));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-  .box{background:var(--glass);padding:3rem 2.5rem;border-radius:28px;box-shadow:var(--card-shadow);text-align:center;max-width:420px;width:92vw;position:relative;border:1px solid var(--border);backdrop-filter:blur(50px) saturate(200%) url(#lg-login);-webkit-backdrop-filter:blur(50px) saturate(200%);animation:fadeInUp 0.3s cubic-bezier(.22,.61,.36,1) both}
+  .box{background:var(--glass);padding:3rem 2.5rem;border-radius:28px;box-shadow:var(--card-shadow);text-align:center;max-width:420px;width:92vw;position:relative;border:1px solid var(--border);backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%);animation:fadeInUp 0.3s cubic-bezier(.22,.61,.36,1) both}
   .box::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(120% 80% at 0% 0%,rgba(255,255,255,0.8) 0%,rgba(255,255,255,0.0) 50%);opacity:0.7}
   .box::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--sheen);mix-blend-mode:screen;z-index:0}
   .box>*{position:relative;z-index:1}
@@ -1329,6 +1323,7 @@ const DASHBOARD_CLIENT_JS = String.raw`
     if(!tb)return;
     tb.innerHTML=_allClicks.length?_allClicks.map(clickRowHtml).join(''):'<tr><td colspan="7" class="empty-state">No click data yet — appears as visitors interact</td></tr>';
   }
+  var _dashSig='';
   function refresh(){
     fetch('/stats',{headers:{'Accept':'application/json'}})
       .then(function(r){if(r.status===401){location.href='/dashboard';return null;}return r.json();})
@@ -1336,33 +1331,43 @@ const DASHBOARD_CLIENT_JS = String.raw`
         if(!d)return;
         var g=function(id,v){var el=document.getElementById(id);if(el)el.textContent=v;};
         g('statToday',d.totals.today);g('stat24h',d.totals.last24h);g('statTotal',d.totals.total);g('statUnique',d.totals.unique);
-        var tr=d.trend||[];
-        if(tr.length){
-          var mx=Math.max.apply(null,tr.map(function(t){return t.count;}))||1;
-          var pts=tr.map(function(t,i){var x=tr.length===1?50:(i/(tr.length-1))*100;return x+','+(40-(t.count/mx)*38);}).join(' ');
-          var poly=document.getElementById('trendPoly');if(poly)poly.setAttribute('points','0,40 '+pts+' 100,40');
-          var dl=document.getElementById('trendDate');
-          if(dl)dl.innerHTML='<span>'+tr[0].date+'</span><span>Peak: '+mx+'</span><span>'+tr[tr.length-1].date+'</span>';
+        var rec=d.recent||[],ck=(d.engagement&&d.engagement.clickDetails)||[];
+        var refs=d.referrers||[],cc=d.topCountries||[];
+        var sig=(rec[0]?rec[0].created_at:'')+'|'+rec.length+'|'+(ck[0]?ck[0].created_at:'')+'|'+ck.length
+          +'|'+(refs[0]?refs[0].count:0)+'|'+refs.length+'|'+(cc[0]?cc[0].count:0)+'|'+cc.length;
+        if(sig!==_dashSig){
+          _dashSig=sig;
+          var tr=d.trend||[];
+          if(tr.length){
+            var mx=Math.max.apply(null,tr.map(function(t){return t.count;}))||1;
+            var pts=tr.map(function(t,i){var x=tr.length===1?50:(i/(tr.length-1))*100;return x+','+(40-(t.count/mx)*38);}).join(' ');
+            var poly=document.getElementById('trendPoly');if(poly)poly.setAttribute('points','0,40 '+pts+' 100,40');
+            var dl=document.getElementById('trendDate');
+            if(dl)dl.innerHTML='<span>'+tr[0].date+'</span><span>Peak: '+mx+'</span><span>'+tr[tr.length-1].date+'</span>';
+          }
+          var ref=document.getElementById('refList');
+          if(ref){
+            var rx=refs,rmax=Math.max(1,rx.length?rx[0].count:1);
+            ref.innerHTML=rx.length?rx.map(function(r){var pct=(r.count/rmax)*100;return '<div class="ref-item"><span class="ref-name">'+escH(r.source)+'</span><div class="ref-bar"><div class="ref-fill" style="width:'+pct+'%"></div></div><span class="ref-count">'+r.count+'</span></div>';}).join(''):'<p class="empty-state">No referrer data</p>';
+          }
+          var cl=document.getElementById('countryList');
+          if(cl){
+            cl.innerHTML=cc.map(function(c){return '<span class="country-chip"><strong>'+c.count+'</strong> '+flagH(c.country)+' '+escH(c.country)+'</span>';}).join('');
+          }
+          _allRecent=rec;
+          renderRecent();
+          _allClicks=ck;
+          renderClicks();
+          applyTracked();
+          showTrackedAlert();
         }
-        var ref=document.getElementById('refList');
-        if(ref){
-          var rx=d.referrers||[],rmax=Math.max(1,rx.length?rx[0].count:1);
-          ref.innerHTML=rx.length?rx.map(function(r){var pct=(r.count/rmax)*100;return '<div class="ref-item"><span class="ref-name">'+escH(r.source)+'</span><div class="ref-bar"><div class="ref-fill" style="width:'+pct+'%"></div></div><span class="ref-count">'+r.count+'</span></div>';}).join(''):'<p class="empty-state">No referrer data</p>';
-        }
-        var cl=document.getElementById('countryList');
-        if(cl){var cx=d.topCountries||[];
-          cl.innerHTML=cx.map(function(c){return '<span class="country-chip"><strong>'+c.count+'</strong> '+flagH(c.country)+' '+escH(c.country)+'</span>';}).join('');}
-        _allRecent=d.recent||[];
-        renderRecent();
-        _allClicks=(d.engagement&&d.engagement.clickDetails)||[];
-        renderClicks();
-        applyTracked();
-        showTrackedAlert();
       })
       .catch(function(){});
   }
   applyTheme();
-  refresh();
+  var _sd=window.__DASH;
+  if(_sd){_allRecent=_sd.recent||[];_allClicks=_sd.clicks||[];renderClicks();}
+  else{refresh();}
   setInterval(refresh,60000);
   var si=document.getElementById('recentSearch');
   if(si)si.addEventListener('input',renderRecent);
@@ -1519,6 +1524,14 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     + '<div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">' + (topClicks.slice(0, 3).map(function(c){ return esc(c.target) + ' <strong>' + c.count + '</strong>'; }).join(' &middot; ') || '—') + '</div><button class="reset-eng" type="button" title="Delete all click &amp; session tracking data">Reset</button></div>'
     + '</div>';
 
+  // Server-known data seeded inline (slim) so the client can skip the on-load /stats re-fetch
+  const dashSeed = JSON.stringify({
+    recent: visits.map(v => ({ created_at: v.created_at, city: v.city, region: v.region, country: v.country,
+      referrer: v.referrer, visitor_id: v.visitor_id, device_type: v.device_type, os: v.os, browser: v.browser,
+      isp: v.isp, postal_code: v.postal_code, latitude: v.latitude, longitude: v.longitude })),
+    clicks: (engagement && engagement.clickDetails) || []
+  }).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+
   const recentRows = visits.map(v => {
     const ago = timeAgo(v.created_at);
     const recent = (Date.now() - new Date(v.created_at + 'Z').getTime()) < 3600000; // within last hour
@@ -1549,18 +1562,6 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E📊%3C/text%3E%3C/svg%3E">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'">
-<svg style="position:fixed;width:0;height:0" aria-hidden="true"><defs>
-<filter id="lg-refract" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
-<feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="7" result="noise"/>
-<feDisplacementMap in="SourceGraphic" in2="noise" scale="14" xChannelSelector="R" yChannelSelector="G"/>
-<feGaussianBlur stdDeviation="0.6"/>
-</filter>
-<filter id="lg-refract-strong" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
-<feTurbulence type="fractalNoise" baseFrequency="0.006 0.01" numOctaves="3" seed="21" result="noise"/>
-<feDisplacementMap in="SourceGraphic" in2="noise" scale="22" xChannelSelector="R" yChannelSelector="G"/>
-<feGaussianBlur stdDeviation="0.8"/>
-</filter>
-</defs></svg>
 <style>
   *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
   :root{--bg:#eef0f6;--text:#1d1d1f;--muted:#6e6e73;--dim:#1d1d1f;
@@ -1594,15 +1595,15 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
       radial-gradient(950px 650px at 45% 92%,rgba(56,217,169,0.45) 0%,rgba(56,217,169,0.12) 30%,transparent 50%),
       radial-gradient(650px 480px at 25% 55%,rgba(255,138,199,0.4) 0%,rgba(255,138,199,0.1) 30%,transparent 48%),
       linear-gradient(160deg,#f0f4ff 0%,#eef0fa 100%);
-    animation:aurora 28s ease-in-out infinite alternate;filter:blur(30px)}
+    animation:none;filter:blur(30px)}
   body::after{
     background:radial-gradient(55% 35% at 50% 0%,rgba(255,255,255,0.7) 0%,transparent 65%);
-    animation:aurora-glow 18s ease-in-out infinite alternate;mix-blend-mode:overlay;filter:none}
+    animation:none;mix-blend-mode:overlay;filter:none}
   body>.aurora-layer{
     background:
       radial-gradient(500px 400px at 70% 30%,rgba(120,180,255,0.35) 0%,transparent 60%),
       radial-gradient(450px 380px at 15% 75%,rgba(180,140,255,0.3) 0%,transparent 55%);
-    animation:aurora-2 22s ease-in-out infinite alternate;mix-blend-mode:screen;filter:blur(40px)}
+    animation:none;mix-blend-mode:screen;filter:blur(40px)}
   html[data-theme="dark"] body>.aurora-layer{
     background:
       radial-gradient(500px 400px at 70% 30%,rgba(60,120,220,0.3) 0%,transparent 60%),
@@ -1626,7 +1627,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .container{max-width:1000px;margin:0 auto}
   .top-bar{position:sticky;top:0.75rem;z-index:20;display:flex;justify-content:space-between;align-items:center;
     flex-wrap:wrap;gap:1rem;padding:1.15rem 1.5rem;margin-bottom:1.75rem;border-radius:var(--radius);overflow:hidden;
-    background:var(--glass-bg);backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%);
+    background:var(--glass-bg);backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%);
     border:1px solid var(--border);box-shadow:var(--glass-shadow)}
   .top-bar::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
   .top-bar::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.6}
@@ -1638,12 +1639,12 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .theme-toggle,.logout{background:var(--glass-bg);color:var(--text);font-size:0.8rem;text-decoration:none;
     padding:0.45rem 1.1rem;border-radius:980px;border:1px solid var(--border);cursor:pointer;font-family:inherit;
     font-weight:600;letter-spacing:0.01em;transition:transform 0.25s cubic-bezier(.22,.61,.36,1),color 0.2s,border-color 0.2s,box-shadow 0.2s;
-    box-shadow:var(--pill-shadow);backdrop-filter:blur(30px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(30px) saturate(200%)}
+    box-shadow:var(--pill-shadow);backdrop-filter:blur(16px) saturate(180%);-webkit-backdrop-filter:blur(16px) saturate(180%)}
   .theme-toggle:hover,.logout:hover{color:var(--accent);border-color:var(--accent);transform:translateY(-1px);box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.9)}
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1.5rem}
   .stat-card{position:relative;overflow:hidden;background:var(--glass-bg);padding:1.4rem 1.5rem;border-radius:var(--radius);
     box-shadow:var(--glass-shadow);border:1px solid var(--border);
-    backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%);
+    backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%);
     transition:transform 0.3s cubic-bezier(.22,.61,.36,1),box-shadow 0.3s;    animation:fadeInUp 0.3s cubic-bezier(.22,.61,.36,1) both}
   .stat-card::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.7}
   .stat-card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
@@ -1658,7 +1659,8 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   @media(max-width:768px){.grid-2{grid-template-columns:1fr}}
   .card{position:relative;overflow:hidden;background:var(--glass-bg);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--glass-shadow);
     margin-bottom:1.5rem;border:1px solid var(--border);
-    backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%)}
+    backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%)}
+  .card, .profile-card{content-visibility:auto;contain-intrinsic-size:auto 320px}
   .card::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.7}
   .card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
   html[data-theme="dark"] .card{background:var(--glass-bg)}
@@ -1679,10 +1681,10 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .ref-count{font-size:0.8rem;color:var(--muted);font-weight:700;min-width:2.5rem;text-align:right;font-variant-numeric:tabular-nums}
   .country-list{display:flex;flex-wrap:wrap;gap:0.5rem}
   .country-chip{background:var(--glass-bg);padding:0.5rem 1rem;border-radius:20px;font-size:0.85rem;box-shadow:var(--pill-shadow);
-    border:1px solid var(--border);backdrop-filter:blur(30px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(30px) saturate(200%);font-weight:500}
+    border:1px solid var(--border);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);font-weight:500}
   .country-chip strong{color:var(--accent);font-weight:700}
   .table-wrap{background:var(--glass-bg);border-radius:var(--radius);overflow:hidden;box-shadow:var(--glass-shadow);border:1px solid var(--border);
-    backdrop-filter:blur(50px) saturate(200%) url(#lg-refract);-webkit-backdrop-filter:blur(50px) saturate(200%)}
+    backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%)}
   table{width:100%;border-collapse:collapse;border-radius:var(--radius)}
   th,td{padding:11px 14px;text-align:left;font-size:0.82rem;white-space:nowrap;letter-spacing:0.01em}
   th{background:rgba(0,113,227,0.06);font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:0.05em;font-size:0.68rem}
@@ -1691,7 +1693,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   tr:last-child td{border-bottom:none}
   tr:hover td{background:rgba(0,113,227,0.05)}
   html[data-theme="dark"] tr:hover td{background:rgba(41,151,255,0.08)}
-  .badge{display:inline-block;padding:3px 9px;border-radius:8px;font-size:0.68rem;font-weight:700;letter-spacing:0.02em;background:rgba(46,125,50,0.12);color:#2e7d32;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  .badge{display:inline-block;padding:3px 9px;border-radius:8px;font-size:0.68rem;font-weight:700;letter-spacing:0.02em;background:rgba(46,125,50,0.12);color:#2e7d32}
   html[data-theme="dark"] .badge{background:rgba(129,199,132,0.16);color:#81c784}
   .badge-new{display:inline-block;padding:2px 6px;border-radius:6px;font-size:0.6rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;background:rgba(46,125,50,0.18);color:#2e7d32;margin-left:6px;animation:pulse-new 2s ease-in-out infinite}
   @keyframes pulse-new{0%,100%{opacity:1}50%{opacity:0.5}}
@@ -1765,12 +1767,6 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
 </style>
 </head>
 <body>
-<svg style="position:fixed;top:0;left:0;width:0;height:0;overflow:hidden" aria-hidden="true"><defs>
-<filter id="lg-refract-body" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
-<feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="7" result="noise"/>
-<feDisplacementMap in="SourceGraphic" in2="noise" scale="10" xChannelSelector="R" yChannelSelector="G"/>
-</filter>
-</defs></svg>
 <div class="aurora-layer" aria-hidden="true"></div>
 <div class="container">
   <div class="tracked-alert" id="trackedAlert" hidden></div>
@@ -1876,6 +1872,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   </div>
   <div class="auto-refresh"><span class="dot"></span> Auto-refreshes every 60s &middot; All times in CST</div>
 </div>
+<script>window.__DASH=${dashSeed};</script>
 <script>
 ${DASHBOARD_CLIENT_JS}
 </script>
