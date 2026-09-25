@@ -1,4 +1,4 @@
-var VERSION = '3.31.0'; // bump when you change the worker code
+var VERSION = '3.32.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -19,6 +19,8 @@ var VERSION = '3.31.0'; // bump when you change the worker code
  *   page_engagement — one row per heartbeat/click/hide event
  *   visitor_identity_links — reversible grouping, raw visitor IDs remain intact
  *   visitor_identity_events — audit trail of manual links/separations
+ *   visitor_visit_overrides — per-visit corrections for destructive legacy merges
+ *   visitor_visit_events — audit trail for historical visit corrections
  *   rate_limits     — atomic UPSERT per (ip, scope, bucket)
  *   sessions        — JTI-based server-side session revocation
  *
@@ -51,6 +53,9 @@ var VERSION = '3.31.0'; // bump when you change the worker code
  *   /meta              GET   — Worker metadata (session auth)
  *   /api/merge-visitors POST — Link two visitor profiles (session+CSRF auth)
  *   /api/unmerge-visitor POST — Separate one original visitor ID
+ *   /api/profile-visits GET — Review a profile's underlying visits
+ *   /api/move-visit POST — Move one historical visit into another profile
+ *   /api/restore-visit POST — Undo a per-visit correction
  *   /logout            POST  — Revoke session (clears cookie + D1 jti)
  *
  * SCHEDULED JOBS (cron: 0 3 * * * — daily at 3 AM UTC)
@@ -68,7 +73,7 @@ var VERSION = '3.31.0'; // bump when you change the worker code
  *
  * @module pageview-logger
  * @author Shoaib Akthar
- * @version 3.20.0
+ * @version 3.32.0
  */
 
 export default {
@@ -98,6 +103,12 @@ export default {
         response = await handleMergeVisitors(request, env);
       } else if (path === '/api/unmerge-visitor') {
         response = await handleUnmergeVisitor(request, env);
+      } else if (path === '/api/profile-visits') {
+        response = await handleProfileVisits(request, env);
+      } else if (path === '/api/move-visit') {
+        response = await handleMoveVisit(request, env);
+      } else if (path === '/api/restore-visit') {
+        response = await handleRestoreVisit(request, env);
       } else if (path === '/api/reset-engagement') {
         response = await handleResetEngagement(request, env);
       } else if (path === '/meta') {
@@ -554,18 +565,18 @@ async function handleMergeVisitors(request, env) {
   if (!validVisitorId(source) || !validVisitorId(target)) {
     return Response.json({ error: 'bad_visitor_id' }, { status: 400, headers: h });
   }
-  const [srcCount, tgtCount, srcLink, tgtLink, members] = await Promise.all([
-    env.DB.prepare('SELECT COUNT(*) AS c FROM page_views WHERE visitor_id = ?').bind(source).first(),
-    env.DB.prepare('SELECT COUNT(*) AS c FROM page_views WHERE visitor_id = ?').bind(target).first(),
+  const [srcExists, tgtExists, srcLink, tgtLink, members] = await Promise.all([
+    profileExists(env.DB, source),
+    profileExists(env.DB, target),
     env.DB.prepare('SELECT canonical_id FROM visitor_identity_links WHERE visitor_id = ?').bind(source).first(),
     env.DB.prepare('SELECT canonical_id FROM visitor_identity_links WHERE visitor_id = ?').bind(target).first(),
     env.DB.prepare('SELECT visitor_id FROM visitor_identity_links WHERE canonical_id = ? ORDER BY visitor_id LIMIT 100').bind(source).all(),
   ]);
   if (srcLink || tgtLink) return Response.json({ error: 'profile_changed', message: 'Refresh the dashboard and try again.' }, { status: 409, headers: h });
-  if (!(srcCount && srcCount.c > 0) && !(members.results || []).length) {
+  if (!srcExists && !(members.results || []).length) {
     return Response.json({ error: 'source_not_found' }, { status: 404, headers: h });
   }
-  if (!(tgtCount && tgtCount.c > 0)) {
+  if (!tgtExists) {
     return Response.json({ error: 'target_not_found' }, { status: 404, headers: h });
   }
   if ((members.results || []).length >= 100) return Response.json({ error: 'group_too_large' }, { status: 409, headers: h });
@@ -604,6 +615,107 @@ async function handleUnmergeVisitor(request, env) {
   if (!results[0]?.meta?.changes) return Response.json({ error: 'profile_changed' }, { status: 409, headers: h });
   console.log(JSON.stringify({ event: 'visitor_separated', eventId }));
   return Response.json({ ok: true, visitorId, canonicalId, eventId }, { headers: h });
+}
+
+async function handleProfileVisits(request, env) {
+  const h = securityHeaders({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  if (request.method !== 'GET') return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: h });
+  const session = sessionTokenFrom(request.headers.get('Cookie') || '');
+  if (!session || !(await verifySessionToken(session, env))) return Response.json({ error: 'unauthorized' }, { status: 401, headers: h });
+  const profile = new URL(request.url).searchParams.get('profile') || '';
+  if (!validVisitorId(profile)) return Response.json({ error: 'bad_profile_id' }, { status: 400, headers: h });
+  const { results } = await env.DB.prepare(
+    `SELECT v.id, v.created_at, v.visitor_id AS original_id, ov.profile_id AS override_id,
+            v.city, v.region, v.country, v.device_type, v.os, v.browser, v.user_agent, v.isp,
+            substr(v.ip_hash, 1, 8) AS network_signal
+     FROM page_views v
+     LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
+     LEFT JOIN visitor_identity_links il ON il.visitor_id = COALESCE(ov.profile_id, v.visitor_id)
+     WHERE COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) = ?
+     ORDER BY v.created_at DESC, v.id DESC LIMIT 101`
+  ).bind(profile).all();
+  return Response.json({ profile, visits: (results || []).slice(0, 100).map(row => {
+    const parsed = row.user_agent ? parseUADetailed(row.user_agent) : null;
+    const { user_agent, ...visit } = row;
+    return { ...visit, os: parsed?.os || row.os, browser: parsed?.browser || row.browser, device_type: parsed?.device || row.device_type };
+  }), hasMore: (results || []).length > 100 }, { headers: h });
+}
+
+async function currentVisitIdentity(db, viewId) {
+  return db.prepare(
+    `SELECT v.visitor_id AS original_id, ov.profile_id AS override_id,
+            COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) AS profile_id
+     FROM page_views v
+     LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
+     LEFT JOIN visitor_identity_links il ON il.visitor_id = COALESCE(ov.profile_id, v.visitor_id)
+     WHERE v.id = ?`
+  ).bind(viewId).first();
+}
+
+async function profileExists(db, profileId) {
+  const row = await db.prepare(
+    `SELECT 1 AS found FROM page_views v
+     LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
+     LEFT JOIN visitor_identity_links il ON il.visitor_id = COALESCE(ov.profile_id, v.visitor_id)
+     WHERE COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) = ? LIMIT 1`
+  ).bind(profileId).first();
+  return !!row;
+}
+
+async function handleMoveVisit(request, env) {
+  const mutation = await identityMutationRequest(request, env);
+  if (mutation.response) return mutation.response;
+  const { body, headers: h } = mutation;
+  const viewId = Number(body.viewId);
+  const fromProfile = String(body.fromProfile || '');
+  const requestedTarget = String(body.targetProfile || '');
+  if (!Number.isSafeInteger(viewId) || viewId < 1 || !validVisitorId(fromProfile) ||
+      !(requestedTarget === 'new' || validVisitorId(requestedTarget))) {
+    return Response.json({ error: 'bad_params' }, { status: 400, headers: h });
+  }
+  const visit = await currentVisitIdentity(env.DB, viewId);
+  if (!visit || visit.profile_id !== fromProfile || visit.override_id) {
+    return Response.json({ error: 'visit_changed', message: 'This visit changed. Refresh its details and try again.' }, { status: 409, headers: h });
+  }
+  const targetProfile = requestedTarget === 'new' ? crypto.randomUUID() : requestedTarget;
+  if (targetProfile === fromProfile || (requestedTarget !== 'new' && !(await profileExists(env.DB, targetProfile)))) {
+    return Response.json({ error: 'bad_target' }, { status: 400, headers: h });
+  }
+  const eventId = crypto.randomUUID();
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      'INSERT INTO visitor_visit_overrides (page_view_id, profile_id) SELECT id, ? FROM page_views WHERE id = ? AND visitor_id = ? AND NOT EXISTS (SELECT 1 FROM visitor_visit_overrides WHERE page_view_id = ?)'
+    ).bind(targetProfile, viewId, visit.original_id, viewId),
+    env.DB.prepare(
+      "INSERT INTO visitor_visit_events (id, action, page_view_id, original_id, profile_id) SELECT ?, 'move', ?, ?, ? WHERE changes() > 0"
+    ).bind(eventId, viewId, visit.original_id, targetProfile),
+  ]);
+  if (!results[0]?.meta?.changes) return Response.json({ error: 'visit_changed' }, { status: 409, headers: h });
+  return Response.json({ ok: true, viewId, profileId: targetProfile, eventId }, { headers: h });
+}
+
+async function handleRestoreVisit(request, env) {
+  const mutation = await identityMutationRequest(request, env);
+  if (mutation.response) return mutation.response;
+  const { body, headers: h } = mutation;
+  const viewId = Number(body.viewId);
+  const expectedProfile = String(body.profileId || '');
+  if (!Number.isSafeInteger(viewId) || viewId < 1 || !validVisitorId(expectedProfile)) {
+    return Response.json({ error: 'bad_params' }, { status: 400, headers: h });
+  }
+  const visit = await currentVisitIdentity(env.DB, viewId);
+  if (!visit || !visit.override_id || visit.profile_id !== expectedProfile) {
+    return Response.json({ error: 'visit_changed', message: 'This visit changed. Refresh its details and try again.' }, { status: 409, headers: h });
+  }
+  const eventId = crypto.randomUUID();
+  const results = await env.DB.batch([
+    env.DB.prepare('DELETE FROM visitor_visit_overrides WHERE page_view_id = ? AND profile_id = ?').bind(viewId, visit.override_id),
+    env.DB.prepare(
+      "INSERT INTO visitor_visit_events (id, action, page_view_id, original_id, profile_id) SELECT ?, 'restore', ?, ?, ? WHERE changes() > 0"
+    ).bind(eventId, viewId, visit.original_id, visit.override_id),
+  ]);
+  if (!results[0]?.meta?.changes) return Response.json({ error: 'visit_changed' }, { status: 409, headers: h });
+  return Response.json({ ok: true, viewId, eventId }, { headers: h });
 }
 
 // Reset all engagement data (clicks, heartbeats, pagehides, sessions). Session-authenticated.
@@ -938,7 +1050,9 @@ async function queryStats(db) {
   const row = await db.prepare(
     `SELECT
        (SELECT COUNT(*) FROM page_views) AS total,
-       (SELECT COUNT(DISTINCT COALESCE(l.canonical_id, v.visitor_id)) FROM page_views v LEFT JOIN visitor_identity_links l ON l.visitor_id = v.visitor_id) AS uniq,
+       (SELECT COUNT(DISTINCT COALESCE(l.canonical_id, ov.profile_id, v.visitor_id))
+        FROM page_views v LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
+        LEFT JOIN visitor_identity_links l ON l.visitor_id = COALESCE(ov.profile_id, v.visitor_id)) AS uniq,
        (SELECT COUNT(*) FROM page_views WHERE date(created_at) = date('now')) AS today,
        (SELECT COUNT(*) FROM page_views WHERE created_at >= datetime('now', '-1 day')) AS last24h`
   ).first();
@@ -1026,15 +1140,20 @@ async function queryTopCountries(db) {
 
 async function queryRecent(db) {
   const { results } = await db.prepare(
-    `SELECT v.created_at, v.country, v.city, v.region, v.referrer, v.page_url, v.visitor_id,
-            COALESCE(il.canonical_id, v.visitor_id) AS profile_id,
+    `SELECT v.created_at, v.country, v.city, v.region, v.referrer, v.page_url, v.visitor_id, v.user_agent,
+            COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) AS profile_id,
             v.device_type, v.os, v.browser, v.latitude, v.longitude, v.postal_code, v.isp, v.language
      FROM page_views v
-     LEFT JOIN visitor_identity_links il ON il.visitor_id = v.visitor_id
+     LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
+     LEFT JOIN visitor_identity_links il ON il.visitor_id = COALESCE(ov.profile_id, v.visitor_id)
      ORDER BY v.created_at DESC
      LIMIT 100`
   ).all();
-  return results || [];
+  return (results || []).map(row => {
+    const parsed = row.user_agent ? parseUADetailed(row.user_agent) : null;
+    const { user_agent, ...visit } = row;
+    return { ...visit, os: parsed?.os || row.os, browser: parsed?.browser || row.browser, device_type: parsed?.device || row.device_type };
+  });
 }
 
 // ── 30-day daily trend ──
@@ -1079,11 +1198,11 @@ async function queryTopReferrers(db) {
 // ── Grouped visitor profiles (one box per device/person) ──
 async function queryVisitorProfiles(db) {
   const { results } = await db.prepare(
-    `SELECT COALESCE(il.canonical_id, v.visitor_id) AS profile_id,
+    `SELECT COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) AS profile_id,
             COUNT(*) as visits,
             MIN(v.created_at) as first_seen,
             MAX(v.created_at) as last_seen,
-            GROUP_CONCAT(DISTINCT v.visitor_id) as member_ids,
+            GROUP_CONCAT(DISTINCT COALESCE(ov.profile_id, v.visitor_id)) as member_ids,
             GROUP_CONCAT(DISTINCT v.city) as cities,
             GROUP_CONCAT(DISTINCT v.region) as regions,
             GROUP_CONCAT(DISTINCT v.country) as countries,
@@ -1097,12 +1216,16 @@ async function queryVisitorProfiles(db) {
             GROUP_CONCAT(DISTINCT v.ip_hash) as ip_hashes,
             GROUP_CONCAT(DISTINCT v.colo) as colos
      FROM page_views v
-     LEFT JOIN visitor_identity_links il ON il.visitor_id = v.visitor_id
-     GROUP BY profile_id
+     LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
+     LEFT JOIN visitor_identity_links il ON il.visitor_id = COALESCE(ov.profile_id, v.visitor_id)
+     GROUP BY COALESCE(il.canonical_id, ov.profile_id, v.visitor_id)
      ORDER BY visits DESC`
   ).all();
 
-  return (results || []).map(r => ({
+  return (results || []).map(r => {
+    const uas = [...new Set((r.uas || '').split(',').filter(Boolean))];
+    const parsed = uas.map(parseUADetailed);
+    return ({
     id: r.profile_id,
     members: [...new Set((r.member_ids || '').split(',').filter(Boolean))].sort((a, b) => a === r.profile_id ? -1 : b === r.profile_id ? 1 : a.localeCompare(b)),
     visits: r.visits || 0,
@@ -1112,22 +1235,25 @@ async function queryVisitorProfiles(db) {
     regions: [...new Set((r.regions || '').split(',').filter(Boolean))],
     countries: [...new Set((r.countries || '').split(',').filter(Boolean))],
     isps: [...new Set((r.isps || '').split(',').filter(Boolean))],
-    uas: [...new Set((r.uas || '').split(',').filter(Boolean))],
-    devices: [...new Set((r.devices || '').split(',').filter(Boolean))],
-    oss: [...new Set((r.oss || '').split(',').filter(Boolean))],
-    browsers: [...new Set((r.browsers || '').split(',').filter(Boolean))],
+    uas,
+    devices: parsed.length ? [...new Set(parsed.map(p => p.device))] : [...new Set((r.devices || '').split(',').filter(Boolean))],
+    oss: parsed.length ? [...new Set(parsed.map(p => p.os))] : [...new Set((r.oss || '').split(',').filter(Boolean))],
+    browsers: parsed.length ? [...new Set(parsed.map(p => p.browser))] : [...new Set((r.browsers || '').split(',').filter(Boolean))],
     langs: [...new Set((r.langs || '').split(',').filter(Boolean))],
     timezones: [...new Set((r.timezones || '').split(',').filter(Boolean))],
     ipHashes: [...new Set((r.ip_hashes || '').split(',').filter(Boolean))],
     colos: [...new Set((r.colos || '').split(',').filter(Boolean))],
-  }));
+  });
+  });
 }
 
 async function queryIdentityEvents(db) {
-  const { results } = await db.prepare(
+  const [{ results }, { results: visitResults }] = await Promise.all([db.prepare(
     'SELECT id, action, source_id, target_id, affected_ids, created_at FROM visitor_identity_events ORDER BY created_at DESC, rowid DESC LIMIT 12'
-  ).all();
-  return (results || []).map(row => ({
+  ).all(), db.prepare(
+    'SELECT id, action, page_view_id, original_id, profile_id, created_at FROM visitor_visit_events ORDER BY created_at DESC, rowid DESC LIMIT 12'
+  ).all()]);
+  const links = (results || []).map(row => ({
     id: row.id,
     action: row.action,
     source: row.source_id,
@@ -1135,6 +1261,16 @@ async function queryIdentityEvents(db) {
     affected: JSON.parse(row.affected_ids || '[]'),
     createdAt: row.created_at,
   }));
+  const visits = (visitResults || []).map(row => ({
+    id: row.id,
+    action: row.action,
+    source: row.original_id,
+    target: row.profile_id,
+    viewId: row.page_view_id,
+    affected: [row.page_view_id],
+    createdAt: row.created_at,
+  }));
+  return [...links, ...visits].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 12);
 }
 
 // ── HTML pages ──
@@ -1421,8 +1557,8 @@ const DASHBOARD_CLIENT_JS = String.raw`
   function identityReview(){
     if(!identityState)return;
     var target=identityState.action==='merge'?document.getElementById('identityTarget').value:identityState.target;
-    document.getElementById('identityFrom').textContent=identityState.source+'\n'+identitySummary(identityProfile(identityState.action==='merge'?identityState.source:identityState.target));
-    document.getElementById('identityTo').textContent=target+'\n'+identitySummary(identityProfile(target));
+    document.getElementById('identityFrom').textContent=identityState.source+(identityState.action==='merge'?' · '+identitySummary(identityProfile(identityState.source)):'');
+    document.getElementById('identityTo').textContent=target+' · '+identitySummary(identityProfile(target));
   }
   function identityOpen(action,source,target){
     if(!identityDialog)return;
@@ -1436,15 +1572,19 @@ const DASHBOARD_CLIENT_JS = String.raw`
     if(action==='merge'){
       wrap.hidden=false;
       ((_sd&&_sd.profiles)||[]).filter(function(p){return p.id!==source;}).forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.id.slice(0,10)+' · '+identitySummary(p);select.appendChild(o);});
-      document.getElementById('identityDialogTitle').textContent='Review profile link';
-      document.getElementById('identityDialogDescription').textContent='Choose a destination. These IDs will appear as one profile, but original visits and clicks stay unchanged. You can separate individual IDs later.';
-      confirm.textContent='Link profiles';confirm.disabled=!select.options.length;
-      if(!select.options.length){err.textContent='There are no other profiles to link.';err.hidden=false;}
+      document.getElementById('identityDialogTitle').textContent='Combine profiles';
+      document.getElementById('identityDialogDescription').textContent='Use this only when both profiles are the same person. Choose which profile remains the main one. To correct two people already mixed in one card, close this and use Review visits.';
+      document.querySelector('.identity-review strong:first-child').textContent='Profile to combine';
+      document.querySelector('.identity-review>div:last-child strong').textContent='Main profile';
+      confirm.textContent='Combine profiles';confirm.disabled=!select.options.length;
+      if(!select.options.length){err.textContent='There are no other profiles to combine.';err.hidden=false;}
     }else{
       wrap.hidden=true;
-      document.getElementById('identityDialogTitle').textContent='Separate visitor ID';
-      document.getElementById('identityDialogDescription').textContent='This original ID will become its own profile again. Its visits and clicks will move in the dashboard view, without changing stored events.';
-      confirm.textContent='Separate ID';confirm.disabled=false;
+      document.getElementById('identityDialogTitle').textContent='Unlink visitor ID';
+      document.getElementById('identityDialogDescription').textContent='This only removes a recent profile link. It cannot split older visits that were stored with the same ID; use Review visits for those.';
+      document.querySelector('.identity-review strong:first-child').textContent='ID to unlink';
+      document.querySelector('.identity-review>div:last-child strong').textContent='Current profile';
+      confirm.textContent='Unlink ID';confirm.disabled=false;
     }
     identityReview();identityDialog.showModal();
   }
@@ -1460,8 +1600,8 @@ const DASHBOARD_CLIENT_JS = String.raw`
       confirm.disabled=true;confirm.textContent='Saving…';err.hidden=true;
       fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
         .then(function(r){return r.json().then(function(d){return{status:r.status,data:d};});})
-        .then(function(result){if(result.data&&result.data.ok){location.reload();return;}err.textContent=(result.data&&result.data.message)||('Could not save ('+((result.data&&result.data.error)||result.status)+'). Refresh and try again.');err.hidden=false;confirm.disabled=false;confirm.textContent=action==='merge'?'Link profiles':'Separate ID';})
-        .catch(function(){err.textContent='Network error. Please try again.';err.hidden=false;confirm.disabled=false;confirm.textContent=action==='merge'?'Link profiles':'Separate ID';});
+        .then(function(result){if(result.data&&result.data.ok){location.reload();return;}err.textContent=(result.data&&result.data.message)||('Could not save ('+((result.data&&result.data.error)||result.status)+'). Refresh and try again.');err.hidden=false;confirm.disabled=false;confirm.textContent=action==='merge'?'Combine profiles':'Unlink ID';})
+        .catch(function(){err.textContent='Network error. Please try again.';err.hidden=false;confirm.disabled=false;confirm.textContent=action==='merge'?'Combine profiles':'Unlink ID';});
     });
   }
   document.addEventListener('click',function(e){
@@ -1470,6 +1610,58 @@ const DASHBOARD_CLIENT_JS = String.raw`
     var separate=e.target.closest('.profile-separate');
     if(separate){e.preventDefault();identityOpen('separate',separate.getAttribute('data-member'),separate.getAttribute('data-canonical'));}
   });
+
+  var visitDialog=document.getElementById('visitDialog'),visitProfile='',visitRows=[],selectedVisit=null;
+  function visitError(message){var el=document.getElementById('visitError');el.textContent=message;el.hidden=false;}
+  function visitRowLabel(v){return (v.city||v.region||v.country||'Unknown area')+' · '+(v.os||v.device_type||'Unknown device')+' · '+(v.browser||'Unknown browser');}
+  function renderVisitList(){
+    var list=document.getElementById('visitList');
+    list.innerHTML=visitRows.length?visitRows.map(function(v){return '<div class="visit-item"><div><strong>'+escH(visitRowLabel(v))+'</strong><small>'+escH(fmtH(v.created_at))+' · '+escH(v.isp||'Unknown network')+(v.network_signal?' · network '+escH(v.network_signal):'')+'</small><small>Visit #'+v.id+(v.override_id?' · moved from original ID '+escH(v.original_id.slice(0,10)):'')+'</small></div><button type="button" class="'+(v.override_id?'visit-restore':'visit-select')+'" data-view-id="'+v.id+'">'+(v.override_id?'Undo move':'Move visit')+'</button></div>';}).join(''):'<p class="identity-note">No visits found in this profile.</p>';
+  }
+  function openVisitDialog(profile){
+    if(!visitDialog)return;
+    visitProfile=profile;visitRows=[];selectedVisit=null;
+    document.getElementById('visitDialogTitle').textContent='Review visits · '+profile.slice(0,10);
+    document.getElementById('visitList').innerHTML='<p class="identity-note">Loading visits…</p>';
+    document.getElementById('visitEditor').hidden=true;
+    document.getElementById('visitError').hidden=true;
+    visitDialog.showModal();
+    fetch('/api/profile-visits?profile='+encodeURIComponent(profile),{credentials:'same-origin'})
+      .then(function(r){if(!r.ok)throw Error('Could not load visits ('+r.status+').');return r.json();})
+      .then(function(d){visitRows=d.visits||[];renderVisitList();if(d.hasMore)visitError('Showing the latest 100 visits only.');})
+      .catch(function(err){visitError(err.message||'Could not load visits.');document.getElementById('visitList').innerHTML='';});
+  }
+  if(visitDialog){
+    document.getElementById('visitClose').addEventListener('click',function(){visitDialog.close();});
+    document.getElementById('visitCancelMove').addEventListener('click',function(){document.getElementById('visitEditor').hidden=true;selectedVisit=null;});
+    document.getElementById('visitList').addEventListener('click',function(e){
+      var button=e.target.closest('button[data-view-id]');if(!button)return;
+      var id=Number(button.getAttribute('data-view-id'));
+      var visit=visitRows.find(function(v){return v.id===id;});if(!visit)return;
+      var err=document.getElementById('visitError');err.hidden=true;
+      if(button.classList.contains('visit-restore')){
+        button.disabled=true;button.textContent='Restoring…';
+        fetch('/api/restore-visit',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({viewId:id,profileId:visitProfile})})
+          .then(function(r){return r.json();}).then(function(d){if(d.ok){location.reload();return;}visitError(d.message||'Could not undo the move. Refresh and try again.');button.disabled=false;button.textContent='Undo move';})
+          .catch(function(){visitError('Network error. Please try again.');button.disabled=false;button.textContent='Undo move';});
+        return;
+      }
+      selectedVisit=visit;
+      document.getElementById('visitSelected').textContent='Move visit #'+id+' · '+visitRowLabel(visit)+' · '+fmtH(visit.created_at);
+      var select=document.getElementById('visitDestination');select.innerHTML='';
+      var fresh=document.createElement('option');fresh.value='new';fresh.textContent='Create a new separate profile';select.appendChild(fresh);
+      ((_sd&&_sd.profiles)||[]).filter(function(p){return p.id!==visitProfile;}).forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent='Existing: '+p.id.slice(0,10)+' · '+identitySummary(p);select.appendChild(o);});
+      document.getElementById('visitEditor').hidden=false;
+    });
+    document.getElementById('visitConfirmMove').addEventListener('click',function(){
+      if(!selectedVisit)return;
+      var button=this;button.disabled=true;button.textContent='Moving…';
+      fetch('/api/move-visit',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({viewId:selectedVisit.id,fromProfile:visitProfile,targetProfile:document.getElementById('visitDestination').value})})
+        .then(function(r){return r.json();}).then(function(d){if(d.ok){location.reload();return;}visitError(d.message||'Could not move this visit. Refresh and try again.');button.disabled=false;button.textContent='Move visit';})
+        .catch(function(){visitError('Network error. Please try again.');button.disabled=false;button.textContent='Move visit';});
+    });
+  }
+  document.addEventListener('click',function(e){var button=e.target.closest('.profile-review');if(button){e.preventDefault();openVisitDialog(button.getAttribute('data-vid'));}});
 
   // ── Reset engagement data (clicks, heartbeats, sessions) ──
   document.addEventListener('click',function(e){
@@ -1791,9 +1983,13 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .profile-loc{font-size:0.78rem;color:var(--accent);margin-bottom:0.4rem}
   .profile-meta{font-size:0.68rem;color:var(--muted);line-height:1.5;word-break:break-word}
   .profile-meta br{content:'';display:block;margin-top:2px}
-  .profile-actions{display:flex;gap:0.4rem;margin-top:0.7rem}
+  .profile-actions{display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.7rem}
   .profile-merge{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
   .profile-merge:hover{border-color:var(--accent);color:var(--accent);background:rgba(0,113,227,0.08)}
+  .profile-review{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--accent);background:var(--accent-soft);cursor:pointer;font-weight:700;color:var(--accent)}
+  .profile-review:hover{filter:brightness(.9)}
+  .prob-review{background:rgba(245,158,11,.16);color:#995000}
+  html[data-theme="dark"] .prob-review{color:#ffd18a}
   html[data-theme="dark"] .profile-card{background:linear-gradient(150deg,rgba(50,58,78,0.5),rgba(28,31,38,0.35))}
   html[data-theme="dark"] .profile-merge{background:rgba(255,255,255,0.06)}
   .track-btn{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
@@ -1867,6 +2063,14 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .identity-error{color:#c62828!important;margin-top:.65rem}
   .identity-error[hidden]{display:none}
   html[data-theme="dark"] .identity-error{color:#ff9c9c!important}
+  .visit-list{display:grid;gap:.55rem;max-height:45vh;overflow:auto;margin-top:1rem}
+  .visit-item{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.8rem;border:1px solid var(--border-soft);border-radius:12px;background:var(--accent-soft)}
+  .visit-item strong{display:block;font-size:.8rem}
+  .visit-item small{display:block;font-size:.7rem;color:var(--muted);line-height:1.5}
+  .visit-item button{flex:none;border:1px solid var(--accent);border-radius:9px;background:var(--bg);color:var(--accent);padding:.4rem .6rem;cursor:pointer;font-size:.72rem;font-weight:700}
+  .visit-editor{margin-top:1rem;padding:1rem;border:1px solid var(--accent);border-radius:14px;background:var(--accent-soft)}
+  .visit-editor[hidden]{display:none}
+  .visit-editor .identity-dialog-actions{margin-top:.75rem}
   @media(max-width:600px){body{padding:1rem}.top-bar{top:0.5rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}}
   @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
@@ -1906,7 +2110,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     </div>
   </div>
 
-  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem" id="identityStudio"><div class="identity-intro"><div><div class="identity-kicker">Identity studio</div><h2>Visitor Profiles</h2><p>Link IDs only when you know they belong together. Raw visits stay untouched; you can separate linked IDs later.</p></div></div><div class="profile-grid tracked-section" id="profileGrid">' + profiles.map(function(p,i){
+  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem" id="identityStudio"><div class="identity-intro"><div><div class="identity-kicker">Identity studio</div><h2>Visitor Profiles</h2><p>Review the visits inside a profile to correct an old mix-up. Combine profiles only when they belong to the same person; linked IDs can be unlinked later.</p></div></div><div class="profile-grid tracked-section" id="profileGrid">' + profiles.map(function(p,i){
     var os = (p.oss && p.oss[0]) || '';
     var browser = (p.browsers && p.browsers[0]) || '';
     var rawUA = (p.uas && p.uas[0]) || '';
@@ -1930,26 +2134,41 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     if (browser) label.push(browser);
     var primaryCity = p.cities[0] || '';
     if (primaryCity) label.push(primaryCity);
-    var visitorName = label.length>0 ? label.join(' · ') : 'Device '+(i+1);
+    var mixed = p.oss.length > 1 && p.countries.length > 1;
+    var visitorName = mixed ? 'Mixed device signals' : label.length>0 ? label.join(' · ') : 'Device '+(i+1);
     if (visitorName.length>35) visitorName=visitorName.slice(0,33)+'…';
     var span = p.firstSeen && p.lastSeen ? (new Date(p.lastSeen+'Z').getTime()-new Date(p.firstSeen+'Z').getTime())/(86400000) : 0;
-    var prob = p.visits>=6 ? 'Regular' : p.visits>=3 ? (span>7 ? 'Frequent' : 'Returning') : 'New';
-    var probClass = p.visits>=6 ? 'high' : p.visits>=3 ? 'med' : 'low';
+    var prob = mixed ? 'Review' : p.visits>=6 ? 'Regular' : p.visits>=3 ? (span>7 ? 'Frequent' : 'Returning') : 'New';
+    var probClass = mixed ? 'review' : p.visits>=6 ? 'high' : p.visits>=3 ? 'med' : 'low';
     var ispList = p.isps && p.isps.filter(Boolean).join(', ') || '';
     var ipList = p.ipHashes && p.ipHashes.filter(Boolean).map(function(h){return h.slice(0,8)}).join(', ') || '';
     var citiesStr = p.cities.slice(0,3).join(', ') + (p.cities.length>3 ? ' +'+(p.cities.length-3) : '');
     var times = p.timezones && p.timezones.filter(Boolean).join(', ') || '';
-    var members = p.members.length > 1 ? '<div class="identity-members"><span class="identity-note">Linked IDs</span>' + p.members.map(function(id){return '<span class="identity-chip" title="'+esc(id)+'">'+esc(id.slice(0,10))+(id!==p.id?' <button type="button" class="profile-separate" data-member="'+esc(id)+'" data-canonical="'+esc(p.id)+'" aria-label="Separate '+esc(id)+'">Separate</button>':'')+'</span>';}).join('') + '</div>' : '';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div>'+members+'<div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Review link into another profile">Link IDs</button></div></div>';
-  }).join('') + '</div><div class="identity-history"><h3>Identity activity</h3>' + (identityEvents.length ? '<ul>' + identityEvents.map(function(ev){return '<li>'+formatTime(ev.createdAt)+' · '+(ev.action==='merge'?'Linked '+ev.affected.length+' ID'+(ev.affected.length===1?'':'s')+' into ':'Separated ')+esc(ev.source.slice(0,10))+(ev.target?' → '+esc(ev.target.slice(0,10)):'')+'</li>';}).join('')+'</ul>' : '<p class="identity-note">No identity changes yet.</p>') + '</div></div>' : ''}
+    var members = p.members.length > 1 ? '<div class="identity-members"><span class="identity-note">Linked IDs</span>' + p.members.map(function(id){return '<span class="identity-chip" title="'+esc(id)+'">'+esc(id.slice(0,10))+(id!==p.id?' <button type="button" class="profile-separate" data-member="'+esc(id)+'" data-canonical="'+esc(p.id)+'" aria-label="Unlink '+esc(id)+'">Unlink</button>':'')+'</span>';}).join('') + '</div>' : '';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div>'+members+'<div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-review" data-vid="'+esc(p.id)+'" title="Inspect and correct individual visits">Review visits</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Combine with another profile">Combine profiles</button></div></div>';
+  }).join('') + '</div><div class="identity-history"><h3>Identity activity</h3>' + (identityEvents.length ? '<ul>' + identityEvents.map(function(ev){var summary=ev.action==='merge'?'Combined '+ev.affected.length+' ID'+(ev.affected.length===1?'':'s'):ev.action==='separate'?'Unlinked an ID':ev.action==='move'?'Moved visit #'+ev.viewId:'Restored visit #'+ev.viewId;return '<li>'+formatTime(ev.createdAt)+' · '+summary+(ev.target?' → '+esc(ev.target.slice(0,10)):'')+'</li>';}).join('')+'</ul>' : '<p class="identity-note">No identity changes yet.</p>') + '</div></div>' : ''}
 
   <dialog class="identity-dialog" id="identityDialog" aria-labelledby="identityDialogTitle">
-    <h2 id="identityDialogTitle">Review identity link</h2>
-    <p id="identityDialogDescription">Choose the destination profile. This changes grouping only; it never rewrites visit or click records.</p>
-    <div id="identityTargetWrap"><label for="identityTarget">Destination profile</label><select id="identityTarget"></select></div>
-    <div class="identity-review"><div><strong>From</strong><span id="identityFrom"></span></div><div><strong>To</strong><span id="identityTo"></span></div></div>
+    <h2 id="identityDialogTitle">Combine profiles</h2>
+    <p id="identityDialogDescription">Choose the main profile. This changes grouping only; it never rewrites visit or click records.</p>
+    <div id="identityTargetWrap"><label for="identityTarget">Keep as main profile</label><select id="identityTarget"></select></div>
+    <div class="identity-review"><div><strong>Profile to combine</strong><span id="identityFrom"></span></div><div><strong>Main profile</strong><span id="identityTo"></span></div></div>
     <p class="identity-error" id="identityError" role="alert" hidden></p>
     <div class="identity-dialog-actions"><button type="button" id="identityCancel">Cancel</button><button type="button" class="identity-confirm" id="identityConfirm">Link profiles</button></div>
+  </dialog>
+
+  <dialog class="identity-dialog" id="visitDialog" aria-labelledby="visitDialogTitle">
+    <h2 id="visitDialogTitle">Review visits</h2>
+    <p>Each line is an individual visit. Choose one only if you know it belongs to another person. The original record stays intact; this historical correction can be undone. Future visits still use the browser’s own ID.</p>
+    <div class="visit-list" id="visitList"></div>
+    <div class="visit-editor" id="visitEditor" hidden>
+      <p id="visitSelected"></p>
+      <label for="visitDestination">Where should this visit appear?</label><select id="visitDestination"></select>
+      <p class="identity-note">Visits only. Click/session events cannot be attributed to a particular visit and will stay with their original ID.</p>
+      <div class="identity-dialog-actions"><button type="button" id="visitCancelMove">Cancel</button><button type="button" class="identity-confirm" id="visitConfirmMove">Move visit</button></div>
+    </div>
+    <p class="identity-error" id="visitError" role="alert" hidden></p>
+    <div class="identity-dialog-actions"><button type="button" id="visitClose">Close</button></div>
   </dialog>
 
   <div class="grid-2">
@@ -2028,17 +2247,18 @@ function coordH(v) {
 function parseUADetailed(ua) {
   if (!ua) return { device: 'Unknown', os: 'Unknown', browser: 'Unknown' };
   let browser = 'Unknown';
-  if (/Edg\//.test(ua)) browser = 'Edge';
+  if (/Brave/i.test(ua)) browser = 'Brave';
+  else if (/Edg\//.test(ua)) browser = 'Edge';
   else if (/SamsungBrowser\//.test(ua)) browser = 'Samsung';
   else if (/Chrome\//.test(ua) && !/Chromium\//.test(ua)) browser = 'Chrome';
   else if (/Firefox\//.test(ua)) browser = 'Firefox';
   else if (/Safari\//.test(ua) && !/Chrome\//.test(ua) && !/Chromium\//.test(ua)) browser = 'Safari';
   let os = 'Unknown';
   if (/Windows NT 10/.test(ua)) os = 'Windows';
-  else if (/Mac OS X/.test(ua)) os = 'macOS';
-  else if (/Android/.test(ua)) os = 'Android';
   else if (/iPhone/.test(ua)) os = 'iOS';
   else if (/iPad/.test(ua)) os = 'iPadOS';
+  else if (/Android/.test(ua)) os = 'Android';
+  else if (/Mac OS X/.test(ua)) os = 'macOS';
   else if (/Linux/.test(ua)) os = 'Linux';
   let device = 'Desktop';
   if (/Tablet|iPad/.test(ua)) device = 'Tablet';
