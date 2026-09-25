@@ -1,4 +1,4 @@
-var VERSION = '3.29.0'; // bump when you change the worker code
+var VERSION = '3.30.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -759,7 +759,9 @@ async function handleDashboard(request, env) {
   }
 
   // GET: verify session cookie
-  if (session && await verifySessionToken(session, env)) {
+  const sessionValid = !!(session && await verifySessionToken(session, env));
+  console.log(JSON.stringify({ event: 'dashboard_session_check', cookiePresent: !!session, valid: sessionValid }));
+  if (sessionValid) {
     const html = await renderDashboard(env.DB);
     return new Response(html, { headers: htmlHeaders });
   }
