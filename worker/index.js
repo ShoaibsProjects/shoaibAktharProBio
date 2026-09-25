@@ -1,4 +1,4 @@
-var VERSION = '3.28.0'; // bump when you change the worker code
+var VERSION = '3.29.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -1185,44 +1185,6 @@ function loginPage(msg, env) {
     });
   </script>
 </div>
-${hasTurnstile ? `<script>
-  document.getElementById('loginForm').addEventListener('submit', function(e){
-    var t = window.turnstile;
-    // Widget not loaded at all — let the form submit normally (server handles it)
-    if (!t) return;
-    var token = t.getResponse();
-    if (token) {
-      appendToken(this, token);
-      t.reset();
-      return;
-    }
-    // Token not ready — poll briefly (~3s), then submit anyway (server tolerates a missing token)
-    e.preventDefault();
-    var btn = document.querySelector('button[type="submit"]');
-    var origText = btn ? btn.textContent : '';
-    if (btn) { btn.textContent = 'Verifying…'; btn.disabled = true; }
-    var tries = 0;
-    var timer = setInterval(function(){
-      tries++;
-      var tk = window.turnstile && window.turnstile.getResponse();
-      if (tk) {
-        clearInterval(timer);
-        appendToken(document.getElementById('loginForm'), tk);
-        window.turnstile.reset();
-        document.getElementById('loginForm').submit();
-      } else if (tries > 15) { // ~3s timeout — submit anyway
-        clearInterval(timer);
-        if (btn) { btn.disabled = false; btn.textContent = origText; }
-        document.getElementById('loginForm').submit();
-      }
-    }, 200);
-  });
-  function appendToken(form, token){
-    var h = document.createElement('input');
-    h.type = 'hidden'; h.name = 'turnstile'; h.value = token;
-    form.appendChild(h);
-  }
-</script>` : ''}
 <script>
   function readTheme(){
     var t=null;
