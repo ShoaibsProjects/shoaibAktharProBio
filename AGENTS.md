@@ -1,5 +1,12 @@
 # Maintenance Log
 
+## 2026-09-25 — v3.29.0 "fix iOS Safari login submit stalled by Turnstile polling"
+- Reported: on iOS Safari, entering the dashboard password left Turnstile spinning, then reloaded the login page with the password blank.
+- Root cause: loginPage intercepted submit and polled `turnstile.getResponse()` while disabling the submit button. If the Turnstile API/widget stalled or threw inside the interval callback on Safari, the native form POST could be prevented indefinitely. The Worker already accepts a missing token and applies the password check plus the existing 5-attempt/10-minute rate limit.
+- Fix: removed the client-side submit interception and polling. The browser now submits the form immediately; Turnstile's generated response is included when available, and server verification remains authoritative for present tokens.
+- Verification: `node --check worker/index.js` and `git diff --check` passed. Live health reports all bindings true; GET `/dashboard` returns 401; login page contains the native POST form and no submit interceptor; missing-token POST reaches `Invalid key`, while a present garbage token returns `Verification failed`.
+- Commit: `09b0018` (`v3.29.0: fix Safari login submit with native form post`). Deployment: `790b0c9d-8fd1-449e-b914-9d1c410f853a` (2026-09-25 17:00 UTC). Successful-key login still requires the user to confirm in Safari.
+
 ## 2026-09-25 — v3.28.0 "fix iOS Safari login for real: set session cookie on 200, not 303 redirect (ITP drops Set-Cookie on 3xx)"
 - Reported: still failing on Safari iOS while Brave/Chrome worked; Turnstile best-effort (v3.27.2) changed nothing. Rate-limit table showed a Safari IPv6 hammering `dashboard-login` (5/5 attempts in one 10-min bucket) → confirms form WAS submitting and the worker was responding, but Safari never got logged in.
 - Root cause (NOT Turnstile): WebKit's ITP deliberately ignores/strips `Set-Cookie` when it rides on a `303`/`302` redirect response (known issue — Safari works-by-design here; Chromium stores it). The login success path was `303 See Other` + `Set-Cookie: __Host-session=...` on the same response → Safari discards the cookie → redirected GET `/dashboard` has no session → server re-serves the login page → "password goes blank / nothing happens." Brave stored the cookie, hence worked.
