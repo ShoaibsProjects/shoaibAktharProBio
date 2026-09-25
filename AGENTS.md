@@ -2,10 +2,10 @@
 
 ## 2026-09-25 — v3.30.0 "diagnose Safari dashboard session cookie"
 - Reported/tested: Turnstile showed success; the login key was accepted and a D1 session was created, but Safari returned to the login page without an "Invalid key" message.
-- Root cause under investigation: the follow-up GET `/dashboard` did not use a session the Worker accepted. Existing evidence cannot distinguish a cookie Safari omitted from a cookie the Worker rejected.
-- Diagnostic change: GET `/dashboard` now logs only `cookiePresent` and `valid` booleans as `dashboard_session_check`; it never logs the session token, access key, or Turnstile token.
-- Verification: `node --check worker/index.js` and `git diff --check` passed. Live health reports all bindings true; unauthenticated GET `/dashboard` returns 401.
-- Commit: `5ecf485` (`v3.30.0: diagnose Safari dashboard session cookie`). Deployment: `0b22eb26-3e6d-4357-935b-374680c0784f` (2026-09-25 17:11 UTC). Next step: one Safari login attempt while watching the sanitized session-check log.
+- Root cause: iPhone Safari Settings > Apps > Safari > Advanced > Block All Cookies was enabled. The Worker’s sanitized live diagnostic recorded `cookiePresent: false` on the redirected dashboard request, matching the visible setting.
+- Diagnostic change: GET `/dashboard` logs only `cookiePresent` and `valid` booleans as `dashboard_session_check`; it never logs the session token, access key, or Turnstile token.
+- Verification: `node --check worker/index.js` and `git diff --check` passed. Live health reports all bindings true; unauthenticated GET `/dashboard` returns 401; the mirrored Safari setting and session-check log confirm the cause. User must turn off Block All Cookies to allow the session cookie.
+- Commit: `5ecf485` (`v3.30.0: diagnose Safari dashboard session cookie`). Deployment: `0b22eb26-3e6d-4357-935b-374680c0784f` (2026-09-25 17:11 UTC).
 
 ## 2026-09-25 — v3.29.0 "fix iOS Safari login submit stalled by Turnstile polling"
 - Reported: on iOS Safari, entering the dashboard password left Turnstile spinning, then reloaded the login page with the password blank.
