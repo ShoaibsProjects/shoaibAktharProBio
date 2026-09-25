@@ -1,4 +1,4 @@
-var VERSION = '3.27.2'; // bump when you change the worker code
+var VERSION = '3.28.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -737,11 +737,20 @@ async function handleDashboard(request, env) {
     }
     console.log(JSON.stringify({ event: 'login_ok', ip }));
     const token = await createSessionToken(env);
-    const res = new Response(null, { status: 303, headers: { Location: '/dashboard', 'Cache-Control': 'no-store' } });
-    res.headers.set(
-      'Set-Cookie',
-      `__Host-session=${token}; Max-Age=3600; Path=/; SameSite=Lax; Secure; HttpOnly`
-    );
+    // Safari/ITP deliberately drops Set-Cookie when it rides on a 303/302 redirect
+    // (known WebKit behavior — works in Chrome/Brave). So we store the session cookie
+    // on a 200 response instead, then navigate client-side to /dashboard.
+    const redirectPage =
+      '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">' +
+      '<title>Redirecting…</title><meta http-equiv="refresh" content="0;url=/dashboard">' +
+      '</head><body><script>window.location.replace("/dashboard")</script></body></html>';
+    const res = new Response(redirectPage, {
+      status: 200,
+      headers: {
+        ...htmlHeaders,
+        'Set-Cookie': `__Host-session=${token}; Max-Age=3600; Path=/; SameSite=Lax; Secure; HttpOnly`,
+      },
+    });
     return res;
   }
 
