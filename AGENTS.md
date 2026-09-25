@@ -1,5 +1,11 @@
 # Maintenance Log
 
+## 2026-09-24 — v3.27.2 "fix iOS Safari login: Turnstile best-effort when widget can't complete"
+- Reported: Safari iOS login "Cloudflare runs/spins, nothing happens, password goes blank." Root cause: the login page's client JS is deliberately built to submit the form WITHOUT a Turnstile token when the widget fails to initialize (`if(!t) return` and the ~10s "submit anyway" timeout), but the server hard-rejected any request missing a valid token when `TURNSTILE_SECRET` was set → `401 Verification failed` → login page re-rendered with an empty password field. On iOS Private Relay / mobile IP rotation the widget often never completes.
+- Fixes: (1) server Turnstile is now best-effort — a *present but invalid* token still gets rejected, but a **missing** token is allowed through to the key check (brute-force rate limit still guards the endpoint); (2) dropped the optional `remoteip` from siteverify — IP at mint time vs verify time can differ on Private Relay/mobile and Cloudflare then rejects valid tokens; (3) client "submit anyway" timeout cut 10s → ~3s (15 polls × 200ms) so mobile users aren't stuck on a spinner.
+- Verified live: POST to `/dashboard` with `key=wrong&turnstile=` now returns `Invalid key` (reaches key check) instead of `Verification failed`. Deployed bundle = 3.27.2 (`tries > 15`, no `remoteip`). Commit `a28de6f`, deployed as `9193627d`.
+- Security note: rate limit (5 attempts/10min/IP via `rate_limits` D1 table) remains the primary brute-force guard; Turnstile is defense-in-depth and now degrades gracefully.
+
 ## 2026-09-24 — v3.27.1 "smoothness hotfix: seed _dashSig from dashSeed so first /stats tick is a no-op"
 - On the v3.27.0 seed path, `_dashSig` stayed `''` and the seed lacked referrer/country sig parts, so the first `/stats` tick (≤60s after load) still rebuilt the recent table, trend, referrer list, and country chips once with identical data.
 - Fix: `dashboardHtml` now emits `refSig`/`ccSig` into `window.__DASH`; the client computes the initial `_dashSig` from the seed at boot. Verified locally: identical data → 0 rebuilds across 5 ticks; real data change → exactly 1 rebuild.
