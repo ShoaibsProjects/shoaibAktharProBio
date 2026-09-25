@@ -1,5 +1,11 @@
 # Maintenance Log
 
+## 2026-09-25 — v3.33.0 "make profile combination understandable"
+- Root cause: the identity dialog exposed source/destination semantics, preselected a destination, and did not make the outcome or undo path clear. That made an accidental combination too easy.
+- Fix: the card now says "Combine with another…" and the dialog asks whether both profiles are the same person. The clicked card remains the main profile; the admin explicitly selects a second profile, sees a two-card comparison, visit-count outcome, difference warnings, and the Unlink path. Confirmation requires an unchecked-by-default same-person checkbox, reset whenever the second profile changes. The comparison stacks on mobile. Backend merge direction now matches the kept card.
+- Verification: `node --check worker/index.js`, `node --test worker/identity.test.mjs`, and `git diff --check` passed, including the kept-card merge direction and rendered dialogue checks. Live health is 200; unauthenticated dashboard and merge route return 401. Authenticated visual confirmation awaits the user; no production identity data was changed for this release.
+- Commit: `ebe6934` (`v3.33.0: clarify profile combination flow`). Deployment: `4474f6ac-a938-4a39-bcda-5a1553932c99` (2026-09-25 17:58 UTC, direct Wrangler deploy after push).
+
 ## 2026-09-25 — v3.32.0 "review and correct legacy mixed visits"
 - Root cause: pre-v3.31 merges had overwritten historical `visitor_id` values, so the new Unlink action could not separate two visits already carrying one raw ID. The combination dialog's From/To wording was unclear, and an iPhone UA containing `Mac OS X` was misclassified as macOS/Safari instead of iOS/Brave.
 - Fix: D1 migration `0002_visit_identity_overrides.sql` adds reversible per-visit display-profile overrides and an audit trail. The dashboard now separates Combine profiles, Unlink ID, and Review visits actions; Review visits can move one historical visit into a new or existing profile and undo the move. Mixed device/country signals get a Review badge. UA labels are corrected at read time for historical data and at ingestion for future data.
