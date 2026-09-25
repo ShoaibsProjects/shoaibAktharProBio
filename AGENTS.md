@@ -1,5 +1,12 @@
 # Maintenance Log
 
+## 2026-09-25 — v3.30.0 "diagnose Safari dashboard session cookie"
+- Reported/tested: Turnstile showed success; the login key was accepted and a D1 session was created, but Safari returned to the login page without an "Invalid key" message.
+- Root cause under investigation: the follow-up GET `/dashboard` did not use a session the Worker accepted. Existing evidence cannot distinguish a cookie Safari omitted from a cookie the Worker rejected.
+- Diagnostic change: GET `/dashboard` now logs only `cookiePresent` and `valid` booleans as `dashboard_session_check`; it never logs the session token, access key, or Turnstile token.
+- Verification: `node --check worker/index.js` and `git diff --check` passed. Live health reports all bindings true; unauthenticated GET `/dashboard` returns 401.
+- Commit: `5ecf485` (`v3.30.0: diagnose Safari dashboard session cookie`). Deployment: `0b22eb26-3e6d-4357-935b-374680c0784f` (2026-09-25 17:11 UTC). Next step: one Safari login attempt while watching the sanitized session-check log.
+
 ## 2026-09-25 — v3.29.0 "fix iOS Safari login submit stalled by Turnstile polling"
 - Reported: on iOS Safari, entering the dashboard password left Turnstile spinning, then reloaded the login page with the password blank.
 - Root cause: loginPage intercepted submit and polled `turnstile.getResponse()` while disabling the submit button. If the Turnstile API/widget stalled or threw inside the interval callback on Safari, the native form POST could be prevented indefinitely. The Worker already accepts a missing token and applies the password check plus the existing 5-attempt/10-minute rate limit.
