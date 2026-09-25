@@ -1,4 +1,4 @@
-var VERSION = '3.32.0'; // bump when you change the worker code
+var VERSION = '3.33.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -73,7 +73,7 @@ var VERSION = '3.32.0'; // bump when you change the worker code
  *
  * @module pageview-logger
  * @author Shoaib Akthar
- * @version 3.32.0
+ * @version 3.33.0
  */
 
 export default {
@@ -1554,11 +1554,24 @@ const DASHBOARD_CLIENT_JS = String.raw`
   var identityState=null;
   function identityProfile(id){return ((_sd&&_sd.profiles)||[]).find(function(p){return p.id===id;});}
   function identitySummary(p){return p?((p.oss||[]).concat(p.browsers||[]).concat(p.cities||[]).filter(Boolean).slice(0,3).join(' · ')||'Unknown device')+' · '+p.visits+' visits · '+p.members.length+' ID'+(p.members.length===1?'':'s'):'No visits';}
+  function sharedSignal(a,b,key){return (a[key]||[]).some(function(x){return (b[key]||[]).indexOf(x)>=0;});}
   function identityReview(){
     if(!identityState)return;
-    var target=identityState.action==='merge'?document.getElementById('identityTarget').value:identityState.target;
-    document.getElementById('identityFrom').textContent=identityState.source+(identityState.action==='merge'?' · '+identitySummary(identityProfile(identityState.source)):'');
-    document.getElementById('identityTo').textContent=target+' · '+identitySummary(identityProfile(target));
+    var keep=identityState.source,add=identityState.action==='merge'?document.getElementById('identityTarget').value:identityState.target;
+    var left=identityProfile(keep),right=identityProfile(add);
+    document.getElementById('identityFrom').textContent=identityState.action==='merge'?keep+'\n'+identitySummary(left):keep;
+    document.getElementById('identityTo').textContent=add?add+'\n'+identitySummary(right):'Choose a second profile above';
+    if(identityState.action==='merge'){
+      var differentCountry=left&&right&&left.countries.length&&right.countries.length&&!sharedSignal(left,right,'countries');
+      var differentDevice=left&&right&&left.oss.length&&right.oss.length&&!sharedSignal(left,right,'oss');
+      var signal=document.getElementById('identitySignals');
+      signal.textContent=!add?'Choose a second profile to compare.':differentCountry&&differentDevice?'Caution: these profiles show different countries and devices. Review visits before combining.':differentCountry?'Caution: the countries differ. Location alone is not proof they are different people.':differentDevice?'Caution: the devices differ. A person may use more than one device.':'Device and location clues can help, but they do not prove two profiles are the same person.';
+      signal.classList.toggle('identity-warning',!!(differentCountry||differentDevice));
+      document.getElementById('identityOutcome').textContent=left&&right?'After combining: one profile with '+(left.visits+right.visits)+' visits. The visitor count drops by one; original visits and clicks are unchanged. '+(right.members.length>1?'This adds '+right.members.length+' IDs; undo by unlinking each added ID.':'You can undo by clicking Unlink on the added ID.') :'';
+      document.getElementById('identityApproval').disabled=!add;
+      if(!add)document.getElementById('identityApproval').checked=false;
+      document.getElementById('identityConfirm').disabled=!add||!document.getElementById('identityApproval').checked;
+    }else document.getElementById('identityConfirm').disabled=false;
   }
   function identityOpen(action,source,target){
     if(!identityDialog)return;
@@ -1568,40 +1581,50 @@ const DASHBOARD_CLIENT_JS = String.raw`
     var confirm=document.getElementById('identityConfirm');
     var err=document.getElementById('identityError');
     err.hidden=true;err.textContent='';
+    document.getElementById('identityApproval').checked=false;
     select.innerHTML='';
     if(action==='merge'){
       wrap.hidden=false;
+      var placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Select a profile to add…';placeholder.disabled=true;placeholder.selected=true;select.appendChild(placeholder);
       ((_sd&&_sd.profiles)||[]).filter(function(p){return p.id!==source;}).forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.id.slice(0,10)+' · '+identitySummary(p);select.appendChild(o);});
-      document.getElementById('identityDialogTitle').textContent='Combine profiles';
-      document.getElementById('identityDialogDescription').textContent='Use this only when both profiles are the same person. Choose which profile remains the main one. To correct two people already mixed in one card, close this and use Review visits.';
-      document.querySelector('.identity-review strong:first-child').textContent='Profile to combine';
-      document.querySelector('.identity-review>div:last-child strong').textContent='Main profile';
-      confirm.textContent='Combine profiles';confirm.disabled=!select.options.length;
-      if(!select.options.length){err.textContent='There are no other profiles to combine.';err.hidden=false;}
+      document.getElementById('identityDialogTitle').textContent='Are these the same person?';
+      document.getElementById('identityDialogDescription').textContent='This profile stays as the main card. Choose a second profile to add only when you recognize both as the same person. To separate people already mixed in one card, use Review visits instead.';
+      document.getElementById('identityFromLabel').textContent='Keep this profile';
+      document.getElementById('identityToLabel').textContent='Add this profile';
+      document.getElementById('identitySignals').hidden=false;
+      document.getElementById('identityOutcome').hidden=false;
+      document.getElementById('identityApprovalWrap').hidden=false;
+      confirm.textContent='Combine into this profile';confirm.disabled=true;
+      if(select.options.length===1){err.textContent='There are no other profiles to combine.';err.hidden=false;}
     }else{
       wrap.hidden=true;
       document.getElementById('identityDialogTitle').textContent='Unlink visitor ID';
       document.getElementById('identityDialogDescription').textContent='This only removes a recent profile link. It cannot split older visits that were stored with the same ID; use Review visits for those.';
-      document.querySelector('.identity-review strong:first-child').textContent='ID to unlink';
-      document.querySelector('.identity-review>div:last-child strong').textContent='Current profile';
+      document.getElementById('identityFromLabel').textContent='ID to unlink';
+      document.getElementById('identityToLabel').textContent='Current profile';
+      document.getElementById('identitySignals').hidden=true;
+      document.getElementById('identityOutcome').hidden=true;
+      document.getElementById('identityApprovalWrap').hidden=true;
       confirm.textContent='Unlink ID';confirm.disabled=false;
     }
     identityReview();identityDialog.showModal();
   }
   if(identityDialog){
-    document.getElementById('identityTarget').addEventListener('change',identityReview);
+    document.getElementById('identityTarget').addEventListener('change',function(){document.getElementById('identityApproval').checked=false;identityReview();});
+    document.getElementById('identityApproval').addEventListener('change',identityReview);
     document.getElementById('identityCancel').addEventListener('click',function(){identityDialog.close();});
     document.getElementById('identityConfirm').addEventListener('click',function(){
       if(!identityState)return;
       var confirm=this,err=document.getElementById('identityError');
-      var action=identityState.action,source=identityState.source,target=action==='merge'?document.getElementById('identityTarget').value:identityState.target;
+      var action=identityState.action,keepProfile=identityState.source,addProfile=action==='merge'?document.getElementById('identityTarget').value:identityState.target;
       var url=action==='merge'?'/api/merge-visitors':'/api/unmerge-visitor';
-      var payload=action==='merge'?{source:source,target:target}:{visitorId:source,canonicalId:target};
+      var payload=action==='merge'?{source:addProfile,target:keepProfile}:{visitorId:keepProfile,canonicalId:addProfile};
+      if(action==='merge'&&!document.getElementById('identityApproval').checked)return;
       confirm.disabled=true;confirm.textContent='Saving…';err.hidden=true;
       fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
         .then(function(r){return r.json().then(function(d){return{status:r.status,data:d};});})
-        .then(function(result){if(result.data&&result.data.ok){location.reload();return;}err.textContent=(result.data&&result.data.message)||('Could not save ('+((result.data&&result.data.error)||result.status)+'). Refresh and try again.');err.hidden=false;confirm.disabled=false;confirm.textContent=action==='merge'?'Combine profiles':'Unlink ID';})
-        .catch(function(){err.textContent='Network error. Please try again.';err.hidden=false;confirm.disabled=false;confirm.textContent=action==='merge'?'Combine profiles':'Unlink ID';});
+        .then(function(result){if(result.data&&result.data.ok){location.reload();return;}err.textContent=(result.data&&result.data.message)||('Could not save ('+((result.data&&result.data.error)||result.status)+'). Refresh and try again.');err.hidden=false;confirm.textContent=action==='merge'?'Combine into this profile':'Unlink ID';identityReview();})
+        .catch(function(){err.textContent='Network error. Please try again.';err.hidden=false;confirm.textContent=action==='merge'?'Combine into this profile':'Unlink ID';identityReview();});
     });
   }
   document.addEventListener('click',function(e){
@@ -1796,7 +1819,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
       referrer: v.referrer, visitor_id: v.visitor_id, profile_id: v.profile_id, device_type: v.device_type, os: v.os, browser: v.browser,
       isp: v.isp, postal_code: v.postal_code, latitude: v.latitude, longitude: v.longitude })),
     clicks: (engagement && engagement.clickDetails) || [],
-    profiles: profiles.map(p => ({ id: p.id, visits: p.visits, members: p.members, cities: p.cities, devices: p.devices, oss: p.oss, browsers: p.browsers })),
+    profiles: profiles.map(p => ({ id: p.id, visits: p.visits, members: p.members, cities: p.cities, countries: p.countries, devices: p.devices, oss: p.oss, browsers: p.browsers })),
     identityRevision: identityEvents?.[0]?.id || '',
     refSig: refSig, ccSig: ccSig
   }).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
@@ -2054,6 +2077,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .identity-dialog select{width:100%;padding:0.75rem;border:1px solid var(--border-soft);border-radius:11px;background:var(--glass-bg);color:var(--text);font:inherit}
   .identity-review{display:grid;grid-template-columns:1fr 1fr;gap:0.7rem;margin-top:1rem}
   .identity-review>div{padding:0.8rem;border:1px solid var(--border-soft);border-radius:12px;background:var(--accent-soft);min-width:0}
+  .identity-review>div:first-child{border-color:rgba(52,199,89,.45);background:rgba(52,199,89,.10)}
   .identity-review strong{display:block;font-size:0.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.4rem}
   .identity-review span{font-size:.78rem;line-height:1.5;overflow-wrap:anywhere}
   .identity-dialog-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1.2rem}
@@ -2063,6 +2087,14 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .identity-error{color:#c62828!important;margin-top:.65rem}
   .identity-error[hidden]{display:none}
   html[data-theme="dark"] .identity-error{color:#ff9c9c!important}
+  .identity-review span{display:block;white-space:pre-line}
+  .identity-signal{margin-top:.85rem;padding:.7rem .85rem;border:1px solid var(--border-soft);border-radius:10px;background:var(--accent-soft);font-size:.78rem;line-height:1.5}
+  .identity-signal.identity-warning{border-color:rgba(245,158,11,.55);background:rgba(245,158,11,.12);color:#8a4b00}
+  html[data-theme="dark"] .identity-signal.identity-warning{color:#ffd18a}
+  #identityOutcome{margin-top:.7rem}
+  .identity-check{display:flex;align-items:flex-start;gap:.55rem;margin-top:1rem;font-size:.8rem;line-height:1.4;cursor:pointer}
+  .identity-check input{width:1rem;height:1rem;margin-top:.08rem;accent-color:var(--accent);flex:none}
+  .identity-signal[hidden],.identity-note[hidden],.identity-check[hidden]{display:none}
   .visit-list{display:grid;gap:.55rem;max-height:45vh;overflow:auto;margin-top:1rem}
   .visit-item{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.8rem;border:1px solid var(--border-soft);border-radius:12px;background:var(--accent-soft)}
   .visit-item strong{display:block;font-size:.8rem}
@@ -2071,7 +2103,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .visit-editor{margin-top:1rem;padding:1rem;border:1px solid var(--accent);border-radius:14px;background:var(--accent-soft)}
   .visit-editor[hidden]{display:none}
   .visit-editor .identity-dialog-actions{margin-top:.75rem}
-  @media(max-width:600px){body{padding:1rem}.top-bar{top:0.5rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}}
+  @media(max-width:600px){body{padding:1rem}.top-bar{top:0.5rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}.identity-review{grid-template-columns:1fr}}
   @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -2145,16 +2177,19 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     var citiesStr = p.cities.slice(0,3).join(', ') + (p.cities.length>3 ? ' +'+(p.cities.length-3) : '');
     var times = p.timezones && p.timezones.filter(Boolean).join(', ') || '';
     var members = p.members.length > 1 ? '<div class="identity-members"><span class="identity-note">Linked IDs</span>' + p.members.map(function(id){return '<span class="identity-chip" title="'+esc(id)+'">'+esc(id.slice(0,10))+(id!==p.id?' <button type="button" class="profile-separate" data-member="'+esc(id)+'" data-canonical="'+esc(p.id)+'" aria-label="Unlink '+esc(id)+'">Unlink</button>':'')+'</span>';}).join('') + '</div>' : '';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div>'+members+'<div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-review" data-vid="'+esc(p.id)+'" title="Inspect and correct individual visits">Review visits</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Combine with another profile">Combine profiles</button></div></div>';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div>'+members+'<div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-review" data-vid="'+esc(p.id)+'" title="Inspect and correct individual visits">Review visits</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Keep this card and add another profile to it">Combine with another…</button></div></div>';
   }).join('') + '</div><div class="identity-history"><h3>Identity activity</h3>' + (identityEvents.length ? '<ul>' + identityEvents.map(function(ev){var summary=ev.action==='merge'?'Combined '+ev.affected.length+' ID'+(ev.affected.length===1?'':'s'):ev.action==='separate'?'Unlinked an ID':ev.action==='move'?'Moved visit #'+ev.viewId:'Restored visit #'+ev.viewId;return '<li>'+formatTime(ev.createdAt)+' · '+summary+(ev.target?' → '+esc(ev.target.slice(0,10)):'')+'</li>';}).join('')+'</ul>' : '<p class="identity-note">No identity changes yet.</p>') + '</div></div>' : ''}
 
   <dialog class="identity-dialog" id="identityDialog" aria-labelledby="identityDialogTitle">
-    <h2 id="identityDialogTitle">Combine profiles</h2>
-    <p id="identityDialogDescription">Choose the main profile. This changes grouping only; it never rewrites visit or click records.</p>
-    <div id="identityTargetWrap"><label for="identityTarget">Keep as main profile</label><select id="identityTarget"></select></div>
-    <div class="identity-review"><div><strong>Profile to combine</strong><span id="identityFrom"></span></div><div><strong>Main profile</strong><span id="identityTo"></span></div></div>
+    <h2 id="identityDialogTitle">Are these the same person?</h2>
+    <p id="identityDialogDescription">The card you opened stays. Choose another profile to add to it.</p>
+    <div id="identityTargetWrap"><label for="identityTarget">Choose a second profile to add</label><select id="identityTarget"></select></div>
+    <div class="identity-review"><div><strong id="identityFromLabel">Keep this profile</strong><span id="identityFrom"></span></div><div><strong id="identityToLabel">Add this profile</strong><span id="identityTo"></span></div></div>
+    <div class="identity-signal" id="identitySignals"></div>
+    <p class="identity-note" id="identityOutcome"></p>
+    <label class="identity-check" id="identityApprovalWrap"><input type="checkbox" id="identityApproval"><span>I know these profiles belong to the same person.</span></label>
     <p class="identity-error" id="identityError" role="alert" hidden></p>
-    <div class="identity-dialog-actions"><button type="button" id="identityCancel">Cancel</button><button type="button" class="identity-confirm" id="identityConfirm">Link profiles</button></div>
+    <div class="identity-dialog-actions"><button type="button" id="identityCancel">Cancel</button><button type="button" class="identity-confirm" id="identityConfirm" disabled>Combine into this profile</button></div>
   </dialog>
 
   <dialog class="identity-dialog" id="visitDialog" aria-labelledby="visitDialogTitle">

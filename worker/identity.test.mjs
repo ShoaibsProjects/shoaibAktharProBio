@@ -118,10 +118,16 @@ test('manual links preserve raw visits and can be separated', async () => {
   assert.equal((await (await request('/api/move-visit', { viewId: 2, fromProfile: A, targetProfile: B })).json()).ok, true);
   assert.equal((await stats()).profiles.find(p => p.id === B).visits, 2);
   assert.equal((await (await request('/api/restore-visit', { viewId: 2, profileId: B })).json()).ok, true);
+  assert.equal((await (await request('/api/merge-visitors', { source: B, target: A })).json()).ok, true);
+  assert.equal((await stats()).profiles.find(p => p.id === A).visits, 3);
+  assert.equal((await (await request('/api/unmerge-visitor', { visitorId: B, canonicalId: A })).json()).ok, true);
   const html = await (await request('/dashboard')).text();
   assert.match(html, /Identity studio/);
   assert.match(html, /Mixed device signals/);
   assert.match(html, /Review visits/);
+  assert.match(html, /Are these the same person\?/);
+  assert.match(html, /I know these profiles belong to the same person/);
+  assert.match(html, /source:addProfile,target:keepProfile/);
   assert.match(html, /IP-based estimate/);
   assert.doesNotMatch(html, /30\.\d{5}, -97\.\d{5}/);
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
