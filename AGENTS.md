@@ -1,5 +1,12 @@
 # Maintenance Log
 
+## 2026-09-25 — v3.31.0 "reversible visitor identity studio"
+- Root cause: the old merge endpoint overwrote `visitor_id` in `page_views` and `page_engagement`, destroying the source identity; the UI used `prompt()` and offered no review, separation, or history. The visit table also presented approximate IP geolocation as five-decimal coordinates.
+- Fix: added additive D1 migration `0001_identity_links.sql` with reversible identity links, canonical-target guards, and an activity audit. Visits/clicks keep their original IDs; stats, profiles, and recent/click views resolve canonical IDs at read time. The dashboard now has a review dialog, linked-ID chips with Separate actions, activity history, and approximate-area map links. Identity mutations require exact same-origin metadata and a valid session. Updated fresh-install schema and added a Node SQLite lifecycle test.
+- Verification: `node --check worker/index.js`, `git diff --check`, `node --test worker/identity.test.mjs` passed. Migration applied locally and remotely; remote D1 retained 25 visits with 0 links/events after migration. Live health shows all bindings present; unauthenticated `/dashboard` returns 401; new `/api/unmerge-visitor` returns 401 without session. Successful authenticated UI flow still requires user confirmation in their browser.
+- Caveat: visitor IDs overwritten by merges before v3.31.0 cannot be reconstructed from those rows. New links are reversible.
+- Commit: `9453dd7` (`v3.31.0: add reversible visitor identity studio`). Deployment: `13c3e139-2be2-4a3e-9e66-645c47d28be5` (2026-09-25 17:35 UTC, direct Wrangler deploy after push).
+
 ## 2026-09-25 — v3.30.0 "diagnose Safari dashboard session cookie"
 - Reported/tested: Turnstile showed success; the login key was accepted and a D1 session was created, but Safari returned to the login page without an "Invalid key" message.
 - Root cause: iPhone Safari Settings > Apps > Safari > Advanced > Block All Cookies was enabled. The Worker’s sanitized live diagnostic recorded `cookiePresent: false` on the redirected dashboard request, matching the visible setting.
