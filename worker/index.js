@@ -1,4 +1,4 @@
-var VERSION = '3.30.0'; // bump when you change the worker code
+var VERSION = '3.31.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -17,6 +17,8 @@ var VERSION = '3.30.0'; // bump when you change the worker code
  * ──────────
  *   page_views      — one row per page load (immutable once written)
  *   page_engagement — one row per heartbeat/click/hide event
+ *   visitor_identity_links — reversible grouping, raw visitor IDs remain intact
+ *   visitor_identity_events — audit trail of manual links/separations
  *   rate_limits     — atomic UPSERT per (ip, scope, bucket)
  *   sessions        — JTI-based server-side session revocation
  *
@@ -25,7 +27,7 @@ var VERSION = '3.30.0'; // bump when you change the worker code
  *   Tier 1 — Cookie (vid2): 1yr, SameSite=None, HttpOnly. Same browser = same device.
  *   Tier 2 — Fingerprint: SHA-256(normalizedUA | lang | ISP | country) → fp-{12hex}.
  *            ISP+country keeps strangers with identical Android UA separated.
- *   Tier 3 — Manual merge via dashboard UI (admin override).
+ *   Tier 3 — Manual reversible links via dashboard Identity studio.
  *
  * SECURITY MODEL
  * ──────────────
@@ -33,7 +35,7 @@ var VERSION = '3.30.0'; // bump when you change the worker code
  *   • Session auth: HMAC-SHA-256 tokens, server-side JTI stored in D1
  *   • Rate limits: Atomic UPSERT per IP, no race-window
  *   • Bot blocking: 34 patterns filtered before DB write
- *   • CSRF: Merge endpoint checks Origin header
+ *   • CSRF: Identity mutations require same-origin request metadata
  *   • Key comparison: timingSafeEqual (SHA-256) — no timing side-channel
  *   • XSS: All user data rendered via esc()/escH()
  *   • Login: Cloudflare Turnstile challenge + brute-force rate limit
@@ -47,7 +49,8 @@ var VERSION = '3.30.0'; // bump when you change the worker code
  *   /stats             GET   — Dashboard data as JSON (session auth)
  *   /health            GET   — Public health check (no auth)
  *   /meta              GET   — Worker metadata (session auth)
- *   /api/merge-visitors POST — Merge two visitor profiles (session+CSRF auth)
+ *   /api/merge-visitors POST — Link two visitor profiles (session+CSRF auth)
+ *   /api/unmerge-visitor POST — Separate one original visitor ID
  *   /logout            POST  — Revoke session (clears cookie + D1 jti)
  *
  * SCHEDULED JOBS (cron: 0 3 * * * — daily at 3 AM UTC)
@@ -93,6 +96,8 @@ export default {
         response = await handleEvent(request, env);
       } else if (path === '/api/merge-visitors') {
         response = await handleMergeVisitors(request, env);
+      } else if (path === '/api/unmerge-visitor') {
+        response = await handleUnmergeVisitor(request, env);
       } else if (path === '/api/reset-engagement') {
         response = await handleResetEngagement(request, env);
       } else if (path === '/meta') {
@@ -512,60 +517,93 @@ async function handleEvent(request, env) {
   return Response.json({ ok: true }, { headers: base });
 }
 
-// ── POST /api/merge-visitors (session-gated, merge all visits from source → target) ──
-async function handleMergeVisitors(request, env) {
+function sameOriginMutation(request) {
+  const origin = request.headers.get('Origin');
+  const referer = request.headers.get('Referer');
+  const site = request.headers.get('Sec-Fetch-Site');
+  const expected = new URL(request.url).origin;
+  if (origin) return origin === expected;
+  if (site !== 'same-origin' || !referer) return false;
+  try { return new URL(referer).origin === expected; } catch (_) { return false; }
+}
+
+async function identityMutationRequest(request, env) {
   const h = securityHeaders({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
-  if (request.method !== 'POST') return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: h });
-
-  // CSRF: only accept requests originated from our own dashboard
-  const origin = request.headers.get('Origin') || '';
-  const host = request.headers.get('Host') || '';
-  if (origin && !origin.includes('pageview-logger') && !host.includes('pageview-logger')) {
-    return Response.json({ error: 'forbidden' }, { status: 403, headers: h });
-  }
-
+  if (request.method !== 'POST') return { response: Response.json({ error: 'method_not_allowed' }, { status: 405, headers: h }) };
+  if (!sameOriginMutation(request)) return { response: Response.json({ error: 'forbidden' }, { status: 403, headers: h }) };
   const session = sessionTokenFrom(request.headers.get('Cookie') || '');
   if (!session || !(await verifySessionToken(session, env))) {
-    return Response.json({ error: 'unauthorized' }, { status: 401, headers: h });
+    return { response: Response.json({ error: 'unauthorized' }, { status: 401, headers: h }) };
   }
-
   let body = {};
-  try { body = await request.json(); } catch (_) { return Response.json({ error: 'bad_json' }, { status: 400, headers: h }); }
+  try { body = await request.json(); } catch (_) { return { response: Response.json({ error: 'bad_json' }, { status: 400, headers: h }) }; }
+  return { body, headers: h };
+}
 
+function validVisitorId(id) { return UUID_RE.test(id) || FP_RE.test(id); }
+
+async function handleMergeVisitors(request, env) {
+  const mutation = await identityMutationRequest(request, env);
+  if (mutation.response) return mutation.response;
+  const { body, headers: h } = mutation;
   const source = String(body.source || '');
   const target = String(body.target || '');
   if (!source || !target || source === target) {
     return Response.json({ error: 'bad_params' }, { status: 400, headers: h });
   }
-
-  // Validate visitor_id format (prevents SQL injection and garbage data)
-  if (!(UUID_RE.test(source) || FP_RE.test(source)) || !(UUID_RE.test(target) || FP_RE.test(target))) {
+  if (!validVisitorId(source) || !validVisitorId(target)) {
     return Response.json({ error: 'bad_visitor_id' }, { status: 400, headers: h });
   }
-
-  // Validate that both visitor_ids exist
-  const [srcCount, tgtCount] = await Promise.all([
+  const [srcCount, tgtCount, srcLink, tgtLink, members] = await Promise.all([
     env.DB.prepare('SELECT COUNT(*) AS c FROM page_views WHERE visitor_id = ?').bind(source).first(),
     env.DB.prepare('SELECT COUNT(*) AS c FROM page_views WHERE visitor_id = ?').bind(target).first(),
+    env.DB.prepare('SELECT canonical_id FROM visitor_identity_links WHERE visitor_id = ?').bind(source).first(),
+    env.DB.prepare('SELECT canonical_id FROM visitor_identity_links WHERE visitor_id = ?').bind(target).first(),
+    env.DB.prepare('SELECT visitor_id FROM visitor_identity_links WHERE canonical_id = ? ORDER BY visitor_id LIMIT 100').bind(source).all(),
   ]);
-  if (!(srcCount && srcCount.c > 0)) {
+  if (srcLink || tgtLink) return Response.json({ error: 'profile_changed', message: 'Refresh the dashboard and try again.' }, { status: 409, headers: h });
+  if (!(srcCount && srcCount.c > 0) && !(members.results || []).length) {
     return Response.json({ error: 'source_not_found' }, { status: 404, headers: h });
   }
   if (!(tgtCount && tgtCount.c > 0)) {
     return Response.json({ error: 'target_not_found' }, { status: 404, headers: h });
   }
+  if ((members.results || []).length >= 100) return Response.json({ error: 'group_too_large' }, { status: 409, headers: h });
+  const affected = [source, ...(members.results || []).map(row => row.visitor_id)];
+  const eventId = crypto.randomUUID();
+  try {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE visitor_identity_links SET canonical_id = ?, updated_at = datetime('now') WHERE canonical_id = ?").bind(target, source),
+      env.DB.prepare('INSERT INTO visitor_identity_links (visitor_id, canonical_id) VALUES (?, ?)').bind(source, target),
+      env.DB.prepare('INSERT INTO visitor_identity_events (id, action, source_id, target_id, affected_ids) VALUES (?, ?, ?, ?, ?)').bind(eventId, 'merge', source, target, JSON.stringify(affected)),
+    ]);
+  } catch (err) {
+    if (/target_not_canonical|UNIQUE constraint/i.test(String(err))) return Response.json({ error: 'profile_changed', message: 'Another identity change was saved. Refresh and try again.' }, { status: 409, headers: h });
+    throw err;
+  }
+  console.log(JSON.stringify({ event: 'visitors_linked', eventId, count: affected.length }));
+  return Response.json({ ok: true, source, target, linked: affected.length, eventId }, { headers: h });
+}
 
-  // Merge page_views
-  const r1 = await env.DB.prepare('UPDATE page_views SET visitor_id = ? WHERE visitor_id = ?').bind(target, source).run();
-  const merged = (r1 && r1.changes) || 0;
-
-  // Merge engagement rows too (heartbeats, clicks, etc.)
-  const r2 = await env.DB.prepare('UPDATE page_engagement SET visitor_id = ? WHERE visitor_id = ?').bind(target, source).run();
-  const engMerged = (r2 && r2.changes) || 0;
-
-  console.log(JSON.stringify({ event: 'visitors_merged', source, target, visits: merged, engagement: engMerged }));
-  return Response.json({ ok: true, merged, engagement: engMerged, source, target }, { headers: h });
+async function handleUnmergeVisitor(request, env) {
+  const mutation = await identityMutationRequest(request, env);
+  if (mutation.response) return mutation.response;
+  const { body, headers: h } = mutation;
+  const visitorId = String(body.visitorId || '');
+  const canonicalId = String(body.canonicalId || '');
+  if (!validVisitorId(visitorId) || !validVisitorId(canonicalId) || visitorId === canonicalId) {
+    return Response.json({ error: 'bad_params' }, { status: 400, headers: h });
+  }
+  const link = await env.DB.prepare('SELECT canonical_id FROM visitor_identity_links WHERE visitor_id = ?').bind(visitorId).first();
+  if (!link || link.canonical_id !== canonicalId) return Response.json({ error: 'profile_changed', message: 'Refresh the dashboard and try again.' }, { status: 409, headers: h });
+  const eventId = crypto.randomUUID();
+  const results = await env.DB.batch([
+    env.DB.prepare('DELETE FROM visitor_identity_links WHERE visitor_id = ? AND canonical_id = ?').bind(visitorId, canonicalId),
+    env.DB.prepare("INSERT INTO visitor_identity_events (id, action, source_id, target_id, affected_ids) SELECT ?, ?, ?, ?, ? WHERE changes() > 0").bind(eventId, 'separate', visitorId, canonicalId, JSON.stringify([visitorId])),
+  ]);
+  if (!results[0]?.meta?.changes) return Response.json({ error: 'profile_changed' }, { status: 409, headers: h });
+  console.log(JSON.stringify({ event: 'visitor_separated', eventId }));
+  return Response.json({ ok: true, visitorId, canonicalId, eventId }, { headers: h });
 }
 
 // Reset all engagement data (clicks, heartbeats, pagehides, sessions). Session-authenticated.
@@ -796,7 +834,7 @@ async function verifyTurnstile(env, token) {
 
 async function renderDashboard(db) {
   try {
-    const [totals, topCountries, recentVisits, trend, referrers, engagement, profiles] = await Promise.all([
+    const [totals, topCountries, recentVisits, trend, referrers, engagement, profiles, identityEvents] = await Promise.all([
       queryStats(db),
       queryTopCountries(db),
       queryRecent(db),
@@ -804,8 +842,9 @@ async function renderDashboard(db) {
       queryTopReferrers(db),
       queryEngagement(db),
       queryVisitorProfiles(db),
+      queryIdentityEvents(db),
     ]);
-    return dashboardHtml(totals, topCountries, recentVisits, trend, referrers, engagement, profiles);
+    return dashboardHtml(totals, topCountries, recentVisits, trend, referrers, engagement, profiles, identityEvents);
   } catch (err) {
     console.error('renderDashboard error:', err.stack || err.message);
     return '<html><body><h1>500</h1><pre>' + (err.stack || err.message) + '</pre></body></html>';
@@ -836,7 +875,7 @@ async function handleStats(request, env) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: jsonHeaders });
   }
 
-  const [totals, topCountries, trend, referrers, recent, engagement, profiles] = await Promise.all([
+  const [totals, topCountries, trend, referrers, recent, engagement, profiles, identityEvents] = await Promise.all([
     queryStats(env.DB),
     queryTopCountries(env.DB),
     queryTrend(env.DB, 30),
@@ -844,9 +883,10 @@ async function handleStats(request, env) {
     queryRecent(env.DB),
     queryEngagement(env.DB),
     queryVisitorProfiles(env.DB),
+    queryIdentityEvents(env.DB),
   ]);
 
-  return Response.json({ totals, topCountries, trend, referrers, recent, engagement, profiles }, { headers: jsonHeaders });
+  return Response.json({ totals, topCountries, trend, referrers, recent, engagement, profiles, identityEvents }, { headers: jsonHeaders });
 }
 
 // ── GET /health ──
@@ -898,7 +938,7 @@ async function queryStats(db) {
   const row = await db.prepare(
     `SELECT
        (SELECT COUNT(*) FROM page_views) AS total,
-       (SELECT COUNT(DISTINCT visitor_id) FROM page_views) AS uniq,
+       (SELECT COUNT(DISTINCT COALESCE(l.canonical_id, v.visitor_id)) FROM page_views v LEFT JOIN visitor_identity_links l ON l.visitor_id = v.visitor_id) AS uniq,
        (SELECT COUNT(*) FROM page_views WHERE date(created_at) = date('now')) AS today,
        (SELECT COUNT(*) FROM page_views WHERE created_at >= datetime('now', '-1 day')) AS last24h`
   ).first();
@@ -952,11 +992,12 @@ async function queryEngagement(db) {
 
   // Per-click log — newest first, with the visitor's latest known location
   const { results: clickDetails } = await db.prepare(
-    `SELECT pe.created_at, pe.visitor_id, pe.target, pe.section, pe.cls, pe.href, pe.x, pe.y,
+    `SELECT pe.created_at, pe.visitor_id, COALESCE(il.canonical_id, pe.visitor_id) AS profile_id, pe.target, pe.section, pe.cls, pe.href, pe.x, pe.y,
             (SELECT v.city    FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS city,
             (SELECT v.region  FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS region,
             (SELECT v.country FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS country
      FROM page_engagement pe
+     LEFT JOIN visitor_identity_links il ON il.visitor_id = pe.visitor_id
      WHERE pe.event_type = 'click' AND pe.target IS NOT NULL AND pe.target != ''
      ORDER BY pe.created_at DESC
      LIMIT 60`
@@ -985,9 +1026,12 @@ async function queryTopCountries(db) {
 
 async function queryRecent(db) {
   const { results } = await db.prepare(
-    `SELECT created_at, country, city, region, referrer, page_url, visitor_id, device_type, os, browser, latitude, longitude, postal_code, isp, language
-     FROM page_views
-     ORDER BY created_at DESC
+    `SELECT v.created_at, v.country, v.city, v.region, v.referrer, v.page_url, v.visitor_id,
+            COALESCE(il.canonical_id, v.visitor_id) AS profile_id,
+            v.device_type, v.os, v.browser, v.latitude, v.longitude, v.postal_code, v.isp, v.language
+     FROM page_views v
+     LEFT JOIN visitor_identity_links il ON il.visitor_id = v.visitor_id
+     ORDER BY v.created_at DESC
      LIMIT 100`
   ).all();
   return results || [];
@@ -1035,29 +1079,32 @@ async function queryTopReferrers(db) {
 // ── Grouped visitor profiles (one box per device/person) ──
 async function queryVisitorProfiles(db) {
   const { results } = await db.prepare(
-    `SELECT visitor_id,
+    `SELECT COALESCE(il.canonical_id, v.visitor_id) AS profile_id,
             COUNT(*) as visits,
-            MIN(created_at) as first_seen,
-            MAX(created_at) as last_seen,
-            GROUP_CONCAT(DISTINCT city) as cities,
-            GROUP_CONCAT(DISTINCT region) as regions,
-            GROUP_CONCAT(DISTINCT country) as countries,
-            GROUP_CONCAT(DISTINCT isp) as isps,
-            GROUP_CONCAT(DISTINCT user_agent) as uas,
-            GROUP_CONCAT(DISTINCT device_type) as devices,
-            GROUP_CONCAT(DISTINCT os) as oss,
-            GROUP_CONCAT(DISTINCT browser) as browsers,
-            GROUP_CONCAT(DISTINCT language) as langs,
-            GROUP_CONCAT(DISTINCT timezone) as timezones,
-            GROUP_CONCAT(DISTINCT ip_hash) as ip_hashes,
-            GROUP_CONCAT(DISTINCT colo) as colos
-     FROM page_views
-     GROUP BY visitor_id
+            MIN(v.created_at) as first_seen,
+            MAX(v.created_at) as last_seen,
+            GROUP_CONCAT(DISTINCT v.visitor_id) as member_ids,
+            GROUP_CONCAT(DISTINCT v.city) as cities,
+            GROUP_CONCAT(DISTINCT v.region) as regions,
+            GROUP_CONCAT(DISTINCT v.country) as countries,
+            GROUP_CONCAT(DISTINCT v.isp) as isps,
+            GROUP_CONCAT(DISTINCT v.user_agent) as uas,
+            GROUP_CONCAT(DISTINCT v.device_type) as devices,
+            GROUP_CONCAT(DISTINCT v.os) as oss,
+            GROUP_CONCAT(DISTINCT v.browser) as browsers,
+            GROUP_CONCAT(DISTINCT v.language) as langs,
+            GROUP_CONCAT(DISTINCT v.timezone) as timezones,
+            GROUP_CONCAT(DISTINCT v.ip_hash) as ip_hashes,
+            GROUP_CONCAT(DISTINCT v.colo) as colos
+     FROM page_views v
+     LEFT JOIN visitor_identity_links il ON il.visitor_id = v.visitor_id
+     GROUP BY profile_id
      ORDER BY visits DESC`
   ).all();
 
   return (results || []).map(r => ({
-    id: r.visitor_id,
+    id: r.profile_id,
+    members: [...new Set((r.member_ids || '').split(',').filter(Boolean))].sort((a, b) => a === r.profile_id ? -1 : b === r.profile_id ? 1 : a.localeCompare(b)),
     visits: r.visits || 0,
     firstSeen: r.first_seen,
     lastSeen: r.last_seen,
@@ -1073,6 +1120,20 @@ async function queryVisitorProfiles(db) {
     timezones: [...new Set((r.timezones || '').split(',').filter(Boolean))],
     ipHashes: [...new Set((r.ip_hashes || '').split(',').filter(Boolean))],
     colos: [...new Set((r.colos || '').split(',').filter(Boolean))],
+  }));
+}
+
+async function queryIdentityEvents(db) {
+  const { results } = await db.prepare(
+    'SELECT id, action, source_id, target_id, affected_ids, created_at FROM visitor_identity_events ORDER BY created_at DESC, rowid DESC LIMIT 12'
+  ).all();
+  return (results || []).map(row => ({
+    id: row.id,
+    action: row.action,
+    source: row.source_id,
+    target: row.target_id,
+    affected: JSON.parse(row.affected_ids || '[]'),
+    createdAt: row.created_at,
   }));
 }
 
@@ -1262,15 +1323,15 @@ const DASHBOARD_CLIENT_JS = String.raw`
   function refLinkH(r,n){return r?'<a href="'+escH(r)+'" rel="noreferrer" style="color:var(--accent);text-decoration:none">'+truncH(escH(r),n)+'</a>':'Direct';}
   function agoH(t){if(!t)return'';var diff=Math.floor((Date.now()-new Date(t+'Z').getTime())/1000);if(diff<0)return'just now';if(diff<60)return diff+'s ago';if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';return Math.floor(diff/86400)+'d ago';}
   function devH(v){var d=v.device_type||'Unknown';var o=v.os||'';var b=v.browser||'';var line=[o,b].filter(Boolean).join(' · ');return '<span class="badge">'+escH(d)+'</span>'+(line?' '+escH(line):(v.user_agent?(' '+escH(uaH(v.user_agent))):''));}
-  function locH(v){var base=escH([v.city,v.region,v.country].filter(Boolean).join(', ')||'—');var hasLat=v.latitude!=null&&v.latitude!=='',hasLon=v.longitude!=null&&v.longitude!=='';var lat=parseFloat(v.latitude),lon=parseFloat(v.longitude);var hasCoords=hasLat&&hasLon&&!isNaN(lat)&&!isNaN(lon);var bits=[];if(hasCoords)bits.push(lat.toFixed(5)+', '+lon.toFixed(5));if(v.postal_code)bits.push(escH(v.postal_code));if(!bits.length)return base;var out='<span style="font-size:0.68rem;color:var(--muted)">'+bits.join(' · ')+'</span>';if(hasCoords)out+=' <a href="https://www.google.com/maps/search/?api=1&query='+lat+','+lon+'" target="_blank" rel="noreferrer" style="color:var(--accent);font-size:0.68rem;text-decoration:none">map</a>';return base+'<div>'+out+'</div>';}
+  function locH(v){var place=[v.city,v.region,v.country].filter(Boolean).join(', ');if(!place)return '—';return escH(place)+'<div class="identity-note">IP-based estimate · <a href="https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(place)+'" target="_blank" rel="noreferrer">Area map</a></div>';}
   function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
   // ── Search filter state ──
   var _allRecent=[];
   var _allClicks=[];
   function rowHtml(v){
-    var vid=v.visitor_id||'';
+    var vid=v.profile_id||v.visitor_id||'';
     var isNew=(Date.now()-new Date(v.created_at+'Z').getTime())<3600000;
-    return '<tr data-vid="'+vid+'"'+(isNew?' class="new-visit"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+(isNew?' <span class="badge-new">NEW</span>':'')+'</div></td><td>'+locH(v)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge">'+escH(vid.slice(0,8))+'</span></td></tr>';
+    return '<tr data-vid="'+escH(vid)+'"'+(isNew?' class="new-visit"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+(isNew?' <span class="badge-new">NEW</span>':'')+'</div></td><td>'+locH(v)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge" title="Original ID: '+escH(v.visitor_id||'')+'">'+escH(vid.slice(0,8))+'</span></td></tr>';
   }
   function renderRecent(){
     var rt=document.getElementById('recentTbody');
@@ -1279,20 +1340,20 @@ const DASHBOARD_CLIENT_JS = String.raw`
     q=q.trim().toLowerCase();
     var rv=_allRecent;
     if(q){rv=rv.filter(function(v){
-      var hay=[v.city,v.region,v.country,v.device_type,v.os,v.browser,v.isp,v.postal_code,(v.visitor_id||'').slice(0,8),v.referrer].filter(Boolean).join(' ').toLowerCase();
+      var hay=[v.city,v.region,v.country,v.device_type,v.os,v.browser,v.isp,v.postal_code,v.visitor_id,v.profile_id,v.referrer].filter(Boolean).join(' ').toLowerCase();
       return hay.indexOf(q)!==-1;
     });}
     rt.innerHTML=rv.length?rv.map(rowHtml).join(''):'<tr><td colspan="5" class="empty-state">No visits match your filter</td></tr>';
   }
   // ── Click detail rows (filled from /stats engagement.clickDetails) ──
   function clickRowHtml(c){
-    var vid=c.visitor_id||'';
+    var vid=c.profile_id||c.visitor_id||'';
     var sec=c.section?escH(truncH(c.section,28)):'—';
     var tgt=c.target?escH(truncH(c.target,40)):'—';
     var link='—';
     if(c.href)link='<a href="'+escH(c.href)+'" target="_blank" rel="noreferrer" style="color:var(--accent);text-decoration:none;font-size:0.72rem">'+truncH(escH(String(c.href).replace(/^https?:\/\//,'')),24)+'</a>';
     var pos=(c.x!=null&&c.y!=null)?c.x+','+c.y:'—';
-    return '<tr data-vid="'+vid+'"><td><div>'+fmtH(c.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(c.created_at)+'</div></td><td><span class="badge">'+escH(vid.slice(0,8))+'</span></td><td>'+locH(c)+'</td><td style="font-size:0.78rem">'+sec+'</td><td style="font-size:0.78rem">'+tgt+'</td><td>'+link+'</td><td style="font-size:0.72rem;color:var(--muted)">'+pos+'</td></tr>';
+    return '<tr data-vid="'+escH(vid)+'"><td><div>'+fmtH(c.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(c.created_at)+'</div></td><td><span class="badge" title="Original ID: '+escH(c.visitor_id||'')+'">'+escH(vid.slice(0,8))+'</span></td><td>'+locH(c)+'</td><td style="font-size:0.78rem">'+sec+'</td><td style="font-size:0.78rem">'+tgt+'</td><td>'+link+'</td><td style="font-size:0.72rem;color:var(--muted)">'+pos+'</td></tr>';
   }
   function renderClicks(){
     var tb=document.getElementById('clickTbody');
@@ -1307,6 +1368,7 @@ const DASHBOARD_CLIENT_JS = String.raw`
         if(!d)return;
         var g=function(id,v){var el=document.getElementById(id);if(el)el.textContent=v;};
         g('statToday',d.totals.today);g('stat24h',d.totals.last24h);g('statTotal',d.totals.total);g('statUnique',d.totals.unique);
+        if(_sd&&d.identityEvents&&((d.identityEvents[0]&&d.identityEvents[0].id)||'')!==_sd.identityRevision){location.reload();return;}
         var rec=d.recent||[],ck=(d.engagement&&d.engagement.clickDetails)||[];
         var refs=d.referrers||[],cc=d.topCountries||[];
         var sig=(rec[0]?rec[0].created_at:'')+'|'+rec.length+'|'+(ck[0]?ck[0].created_at:'')+'|'+ck.length
@@ -1352,31 +1414,61 @@ const DASHBOARD_CLIENT_JS = String.raw`
   var si=document.getElementById('recentSearch');
   if(si)si.addEventListener('input',renderRecent);
 
-  // Profile merge — one-click: shows input for target ID
+  var identityDialog=document.getElementById('identityDialog');
+  var identityState=null;
+  function identityProfile(id){return ((_sd&&_sd.profiles)||[]).find(function(p){return p.id===id;});}
+  function identitySummary(p){return p?((p.oss||[]).concat(p.browsers||[]).concat(p.cities||[]).filter(Boolean).slice(0,3).join(' · ')||'Unknown device')+' · '+p.visits+' visits · '+p.members.length+' ID'+(p.members.length===1?'':'s'):'No visits';}
+  function identityReview(){
+    if(!identityState)return;
+    var target=identityState.action==='merge'?document.getElementById('identityTarget').value:identityState.target;
+    document.getElementById('identityFrom').textContent=identityState.source+'\n'+identitySummary(identityProfile(identityState.action==='merge'?identityState.source:identityState.target));
+    document.getElementById('identityTo').textContent=target+'\n'+identitySummary(identityProfile(target));
+  }
+  function identityOpen(action,source,target){
+    if(!identityDialog)return;
+    identityState={action:action,source:source,target:target||''};
+    var select=document.getElementById('identityTarget');
+    var wrap=document.getElementById('identityTargetWrap');
+    var confirm=document.getElementById('identityConfirm');
+    var err=document.getElementById('identityError');
+    err.hidden=true;err.textContent='';
+    select.innerHTML='';
+    if(action==='merge'){
+      wrap.hidden=false;
+      ((_sd&&_sd.profiles)||[]).filter(function(p){return p.id!==source;}).forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.id.slice(0,10)+' · '+identitySummary(p);select.appendChild(o);});
+      document.getElementById('identityDialogTitle').textContent='Review profile link';
+      document.getElementById('identityDialogDescription').textContent='Choose a destination. These IDs will appear as one profile, but original visits and clicks stay unchanged. You can separate individual IDs later.';
+      confirm.textContent='Link profiles';confirm.disabled=!select.options.length;
+      if(!select.options.length){err.textContent='There are no other profiles to link.';err.hidden=false;}
+    }else{
+      wrap.hidden=true;
+      document.getElementById('identityDialogTitle').textContent='Separate visitor ID';
+      document.getElementById('identityDialogDescription').textContent='This original ID will become its own profile again. Its visits and clicks will move in the dashboard view, without changing stored events.';
+      confirm.textContent='Separate ID';confirm.disabled=false;
+    }
+    identityReview();identityDialog.showModal();
+  }
+  if(identityDialog){
+    document.getElementById('identityTarget').addEventListener('change',identityReview);
+    document.getElementById('identityCancel').addEventListener('click',function(){identityDialog.close();});
+    document.getElementById('identityConfirm').addEventListener('click',function(){
+      if(!identityState)return;
+      var confirm=this,err=document.getElementById('identityError');
+      var action=identityState.action,source=identityState.source,target=action==='merge'?document.getElementById('identityTarget').value:identityState.target;
+      var url=action==='merge'?'/api/merge-visitors':'/api/unmerge-visitor';
+      var payload=action==='merge'?{source:source,target:target}:{visitorId:source,canonicalId:target};
+      confirm.disabled=true;confirm.textContent='Saving…';err.hidden=true;
+      fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+        .then(function(r){return r.json().then(function(d){return{status:r.status,data:d};});})
+        .then(function(result){if(result.data&&result.data.ok){location.reload();return;}err.textContent=(result.data&&result.data.message)||('Could not save ('+((result.data&&result.data.error)||result.status)+'). Refresh and try again.');err.hidden=false;confirm.disabled=false;confirm.textContent=action==='merge'?'Link profiles':'Separate ID';})
+        .catch(function(){err.textContent='Network error. Please try again.';err.hidden=false;confirm.disabled=false;confirm.textContent=action==='merge'?'Link profiles':'Separate ID';});
+    });
+  }
   document.addEventListener('click',function(e){
-    var btn=e.target.closest('.profile-merge');
-    if(!btn)return;
-    e.preventDefault();e.stopPropagation();
-    var src=btn.getAttribute('data-vid');
-    if(!src)return;
-    var cards=document.querySelectorAll('.profile-card');
-    var ids=[];cards.forEach(function(c){var v=c.getAttribute('data-vid');if(v&&v!==src)ids.push(v);});
-    if(!ids.length){alert('No other profiles to merge into.');return;}
-    var tgt=prompt('Merge '+src.slice(0,10)+' into:\n'+ids.map(function(v,i){return '  ['+i+'] '+v.slice(0,10);}).join('\n')+'\n\nEnter number or ID:',ids[0]);
-    if(!tgt)return;
-    // Accept either index or full ID
-    var idx=parseInt(tgt,10);
-    var target=(idx>=0&&idx<ids.length)?ids[idx]:tgt.trim();
-    if(target===src||ids.indexOf(target)<0){alert('Invalid target.');return;}
-    if(!confirm('MERGE: '+src.slice(0,10)+' → '+target.slice(0,10)+'?'))return;
-    btn.disabled=true;btn.textContent='…';
-    fetch('/api/merge-visitors',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src,target:target})})
-      .then(function(r){return r.json().catch(function(){return{ok:false}});})
-      .then(function(d){
-        if(d&&d.ok){window.location.reload();}
-        else{alert('Merge failed: '+(d&&d.error||'unknown'));btn.disabled=false;btn.textContent='merge';}
-      })
-       .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='merge';});
+    var merge=e.target.closest('.profile-merge');
+    if(merge){e.preventDefault();identityOpen('merge',merge.getAttribute('data-vid'));return;}
+    var separate=e.target.closest('.profile-separate');
+    if(separate){e.preventDefault();identityOpen('separate',separate.getAttribute('data-member'),separate.getAttribute('data-canonical'));}
   });
 
   // ── Reset engagement data (clicks, heartbeats, sessions) ──
@@ -1477,7 +1569,7 @@ const DASHBOARD_CLIENT_JS = String.raw`
 
 `;
 
-function dashboardHtml(totals, countries, visits, trend, referrers, engagement, profiles) {
+function dashboardHtml(totals, countries, visits, trend, referrers, engagement, profiles, identityEvents) {
   const trendMax = Math.max(1, ...trend.map(t => t.count));
   const trendPoints = trend.length ? trend.map((t, i) => {
     const x = (trend.length === 1) ? 50 : (i / (trend.length - 1)) * 100;
@@ -1509,9 +1601,11 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   const ccSig = ((countries && countries[0] && countries[0].count) || 0) + '|' + (countries ? countries.length : 0);
   const dashSeed = JSON.stringify({
     recent: visits.map(v => ({ created_at: v.created_at, city: v.city, region: v.region, country: v.country,
-      referrer: v.referrer, visitor_id: v.visitor_id, device_type: v.device_type, os: v.os, browser: v.browser,
+      referrer: v.referrer, visitor_id: v.visitor_id, profile_id: v.profile_id, device_type: v.device_type, os: v.os, browser: v.browser,
       isp: v.isp, postal_code: v.postal_code, latitude: v.latitude, longitude: v.longitude })),
     clicks: (engagement && engagement.clickDetails) || [],
+    profiles: profiles.map(p => ({ id: p.id, visits: p.visits, members: p.members, cities: p.cities, devices: p.devices, oss: p.oss, browsers: p.browsers })),
+    identityRevision: identityEvents?.[0]?.id || '',
     refSig: refSig, ccSig: ccSig
   }).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 
@@ -1522,15 +1616,15 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     const os = esc(v.os || '');
     const browser = esc(v.browser || '');
     const dev = esc(v.device_type || '');
-    const vid = v.visitor_id || '';
-    return '<tr data-vid="' + vid + '"' + (recent ? ' class="new-visit"' : '') + '>'
+    const vid = v.profile_id || v.visitor_id || '';
+    return '<tr data-vid="' + esc(vid) + '"' + (recent ? ' class="new-visit"' : '') + '>'
       + '<td><div>' + formatTime(v.created_at) + '</div><div style="font-size:0.7rem;color:var(--muted)">' + ago + (recent ? ' <span class="badge-new">NEW</span>' : '') + '</div></td>'
       + '<td>' + esc(loc) + coordH(v) + '</td>'
       + '<td style="font-size:0.78rem">' + (dev ? '<span class="badge">' + dev + '</span> ' : '') + ' ' + esc([os, browser].filter(Boolean).join(' · ') || '—') + '</td>'
       + '<td>' + (v.referrer
         ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 30) + '</a>'
         : 'Direct') + '</td>'
-      + '<td><span class="badge">' + esc(v.visitor_id.slice(0, 8)) + '</span></td></tr>';
+      + '<td><span class="badge" title="Original ID: ' + esc(v.visitor_id || '') + '">' + esc(vid.slice(0, 8)) + '</span></td></tr>';
   }).join('');
   const countryChips = countries.length ? countries.map(c =>
     '<span class="country-chip"><strong>' + c.count + '</strong> ' + flag(c.country) + ' ' + esc(c.country) + '</span>'
@@ -1745,6 +1839,34 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .search-wrap input::placeholder{color:var(--muted)}
   .search-icon{position:absolute;left:0.65rem;top:50%;transform:translateY(-50%);width:14px;height:14px;
     stroke:var(--muted);fill:none;stroke-width:2;stroke-linecap:round;pointer-events:none}
+  .identity-intro{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:1.2rem}
+  .identity-intro p,.identity-note{font-size:0.78rem;color:var(--muted);line-height:1.5}
+  .identity-kicker{font-size:0.68rem;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:var(--accent);margin-bottom:0.25rem}
+  .identity-members{display:flex;flex-wrap:wrap;align-items:center;gap:0.35rem;margin-top:0.75rem}
+  .identity-chip{display:inline-flex;align-items:center;gap:0.25rem;padding:0.22rem 0.4rem;border:1px solid var(--border-soft);border-radius:8px;background:var(--accent-soft);font-size:0.68rem;font-family:ui-monospace,SFMono-Regular,monospace;color:var(--text)}
+  .identity-chip button{border:0;background:none;color:var(--accent);cursor:pointer;font:inherit;font-weight:800;padding:0 0.1rem}
+  .identity-chip button:hover{text-decoration:underline}
+  .identity-history{margin-top:1.2rem;padding-top:1rem;border-top:1px solid var(--border-soft)}
+  .identity-history h3{font-size:0.85rem;margin-bottom:0.55rem}
+  .identity-history ul{list-style:none;display:grid;gap:0.4rem}
+  .identity-history li{font-size:0.73rem;color:var(--muted);line-height:1.45}
+  .identity-dialog{width:min(92vw,530px);max-height:85vh;overflow:auto;margin:auto;padding:1.4rem;border:1px solid var(--border);border-radius:22px;background:var(--bg);color:var(--text);box-shadow:0 30px 90px rgba(0,0,0,.35);font-family:inherit}
+  .identity-dialog::backdrop{background:rgba(10,15,30,.65);backdrop-filter:blur(4px)}
+  .identity-dialog h2{font-size:1.2rem;margin-bottom:0.5rem}
+  .identity-dialog p{font-size:0.8rem;line-height:1.55;color:var(--muted)}
+  .identity-dialog label{display:block;font-size:0.77rem;font-weight:700;margin:1rem 0 0.35rem}
+  .identity-dialog select{width:100%;padding:0.75rem;border:1px solid var(--border-soft);border-radius:11px;background:var(--glass-bg);color:var(--text);font:inherit}
+  .identity-review{display:grid;grid-template-columns:1fr 1fr;gap:0.7rem;margin-top:1rem}
+  .identity-review>div{padding:0.8rem;border:1px solid var(--border-soft);border-radius:12px;background:var(--accent-soft);min-width:0}
+  .identity-review strong{display:block;font-size:0.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.4rem}
+  .identity-review span{font-size:.78rem;line-height:1.5;overflow-wrap:anywhere}
+  .identity-dialog-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1.2rem}
+  .identity-dialog-actions button{border:1px solid var(--border-soft);border-radius:10px;padding:.65rem 1rem;font:inherit;font-size:.8rem;font-weight:700;cursor:pointer;background:var(--glass-bg);color:var(--text)}
+  .identity-dialog-actions .identity-confirm{background:var(--accent);border-color:var(--accent);color:white}
+  .identity-dialog-actions button:disabled{opacity:.55;cursor:wait}
+  .identity-error{color:#c62828!important;margin-top:.65rem}
+  .identity-error[hidden]{display:none}
+  html[data-theme="dark"] .identity-error{color:#ff9c9c!important}
   @media(max-width:600px){body{padding:1rem}.top-bar{top:0.5rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}}
   @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
@@ -1784,7 +1906,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     </div>
   </div>
 
-  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem"><h2>Visitor Profiles</h2><p style="font-size:0.78rem;color:var(--muted);margin-bottom:1rem">Click ★ Track to follow a visitor — they stay at the top with a golden glow.</p><div class="profile-grid tracked-section" id="profileGrid">' + profiles.map(function(p,i){
+  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem" id="identityStudio"><div class="identity-intro"><div><div class="identity-kicker">Identity studio</div><h2>Visitor Profiles</h2><p>Link IDs only when you know they belong together. Raw visits stay untouched; you can separate linked IDs later.</p></div></div><div class="profile-grid tracked-section" id="profileGrid">' + profiles.map(function(p,i){
     var os = (p.oss && p.oss[0]) || '';
     var browser = (p.browsers && p.browsers[0]) || '';
     var rawUA = (p.uas && p.uas[0]) || '';
@@ -1817,8 +1939,18 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     var ipList = p.ipHashes && p.ipHashes.filter(Boolean).map(function(h){return h.slice(0,8)}).join(', ') || '';
     var citiesStr = p.cities.slice(0,3).join(', ') + (p.cities.length>3 ? ' +'+(p.cities.length-3) : '');
     var times = p.timezones && p.timezones.filter(Boolean).join(', ') || '';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div><div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Merge into another profile">merge</button></div></div>';
-  }).join('') + '</div></div>' : ''}
+    var members = p.members.length > 1 ? '<div class="identity-members"><span class="identity-note">Linked IDs</span>' + p.members.map(function(id){return '<span class="identity-chip" title="'+esc(id)+'">'+esc(id.slice(0,10))+(id!==p.id?' <button type="button" class="profile-separate" data-member="'+esc(id)+'" data-canonical="'+esc(p.id)+'" aria-label="Separate '+esc(id)+'">Separate</button>':'')+'</span>';}).join('') + '</div>' : '';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div>'+members+'<div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Review link into another profile">Link IDs</button></div></div>';
+  }).join('') + '</div><div class="identity-history"><h3>Identity activity</h3>' + (identityEvents.length ? '<ul>' + identityEvents.map(function(ev){return '<li>'+formatTime(ev.createdAt)+' · '+(ev.action==='merge'?'Linked '+ev.affected.length+' ID'+(ev.affected.length===1?'':'s')+' into ':'Separated ')+esc(ev.source.slice(0,10))+(ev.target?' → '+esc(ev.target.slice(0,10)):'')+'</li>';}).join('')+'</ul>' : '<p class="identity-note">No identity changes yet.</p>') + '</div></div>' : ''}
+
+  <dialog class="identity-dialog" id="identityDialog" aria-labelledby="identityDialogTitle">
+    <h2 id="identityDialogTitle">Review identity link</h2>
+    <p id="identityDialogDescription">Choose the destination profile. This changes grouping only; it never rewrites visit or click records.</p>
+    <div id="identityTargetWrap"><label for="identityTarget">Destination profile</label><select id="identityTarget"></select></div>
+    <div class="identity-review"><div><strong>From</strong><span id="identityFrom"></span></div><div><strong>To</strong><span id="identityTo"></span></div></div>
+    <p class="identity-error" id="identityError" role="alert" hidden></p>
+    <div class="identity-dialog-actions"><button type="button" id="identityCancel">Cancel</button><button type="button" class="identity-confirm" id="identityConfirm">Link profiles</button></div>
+  </dialog>
 
   <div class="grid-2">
     <div class="card">
@@ -1848,7 +1980,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     </div>
     <div class="table-scroll-x">
       <table>
-        <thead><tr><th>Time (CST)</th><th>Location · Coords</th><th>Device · OS</th><th>Source</th><th>Visitor</th></tr></thead>
+        <thead><tr><th>Time (CST)</th><th>Approx. area</th><th>Device · OS</th><th>Source</th><th>Profile</th></tr></thead>
         <tbody id="recentTbody">${recentRows}</tbody>
       </table>
     </div>
@@ -1884,23 +2016,12 @@ function truncate(s, n) {
   return s.length > n ? s.slice(0, n) + '...' : s;
 }
 
-// Coord + postal detail line with a Google Maps link (shown when IP geo gave coords)
+// City/region from IP geolocation is approximate, not a visitor's GPS position.
 function coordH(v) {
-  const hasLat = v.latitude != null && v.latitude !== '';
-  const hasLon = v.longitude != null && v.longitude !== '';
-  const lat = parseFloat(v.latitude);
-  const lon = parseFloat(v.longitude);
-  const hasCoords = hasLat && hasLon && !isNaN(lat) && !isNaN(lon);
-  const bits = [];
-  if (hasCoords) bits.push(lat.toFixed(5) + ', ' + lon.toFixed(5));
-  if (v.postal_code) bits.push(esc(v.postal_code));
-  if (!bits.length) return '';
-  let out = '<span style="font-size:0.68rem;color:var(--muted)">' + bits.join(' · ') + '</span>';
-  if (hasCoords) {
-    out += ' <a href="https://www.google.com/maps/search/?api=1&query=' + lat + ',' + lon
-      + '" target="_blank" rel="noreferrer" style="color:var(--accent);font-size:0.68rem;text-decoration:none">map</a>';
-  }
-  return '<div>' + out + '</div>';
+  const place = [v.city, v.region, v.country].filter(Boolean).join(', ');
+  if (!place) return '';
+  return '<div class="identity-note">IP-based estimate · <a href="https://www.google.com/maps/search/?api=1&query='
+    + encodeURIComponent(place) + '" target="_blank" rel="noreferrer">Area map</a></div>';
 }
 
 // User‑agent parser — returns structured fields for DB storage
