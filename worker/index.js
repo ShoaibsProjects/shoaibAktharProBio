@@ -1,4 +1,4 @@
-var VERSION = '3.27.1'; // bump when you change the worker code
+var VERSION = '3.27.2'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -716,8 +716,10 @@ async function handleDashboard(request, env) {
     }
     if (env.TURNSTILE_SECRET) {
       const token = (body && typeof body.get === 'function' ? (body.get('turnstile') || body.get('cf-turnstile-response') || '') : '') || '';
-      const okT = await verifyTurnstile(request, env, token);
-      if (!okT) {
+      // Best-effort Turnstile: the client intentionally submits WITHOUT a token when the widget
+      // fails to initialize (e.g. Safari iOS / mobile / Private Relay), so only reject a PRESENT
+      // but invalid token. The brute-force rate limit above still guards this endpoint.
+      if (token && !(await verifyTurnstile(env, token))) {
         return new Response(loginPage('Verification failed. Please try again.', env), {
           status: 401,
           headers: htmlHeaders,
@@ -760,13 +762,14 @@ async function handleDashboard(request, env) {
 }
 
 // Optional Turnstile verification (only called when TURNSTILE_SECRET is configured)
-async function verifyTurnstile(request, env, token) {
+async function verifyTurnstile(env, token) {
   try {
-    const ip = request.headers.get('CF-Connecting-IP') || '';
     const params = new URLSearchParams();
     params.set('secret', env.TURNSTILE_SECRET);
     params.set('response', token);
-    if (ip) params.set('remoteip', ip);
+    // Note: no `remoteip` — on iOS Private Relay / mobile IP rotation the IP at token-mint
+    // time can differ from the IP at siteverify time, which makes Cloudflare reject valid
+    // tokens. remoteip is optional; omitting it avoids those false rejections.
     const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1184,7 +1187,7 @@ ${hasTurnstile ? `<script>
       t.reset();
       return;
     }
-    // Token not ready — poll up to 10s, then submit anyway
+    // Token not ready — poll briefly (~3s), then submit anyway (server tolerates a missing token)
     e.preventDefault();
     var btn = document.querySelector('button[type="submit"]');
     var origText = btn ? btn.textContent : '';
@@ -1198,7 +1201,7 @@ ${hasTurnstile ? `<script>
         appendToken(document.getElementById('loginForm'), tk);
         window.turnstile.reset();
         document.getElementById('loginForm').submit();
-      } else if (tries > 50) { // ~10s timeout — submit anyway
+      } else if (tries > 15) { // ~3s timeout — submit anyway
         clearInterval(timer);
         if (btn) { btn.disabled = false; btn.textContent = origText; }
         document.getElementById('loginForm').submit();
