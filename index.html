@@ -1140,31 +1140,31 @@
    <!-- <a href="#main-content" class="skip-to-content">Skip to main content</a> -->
 
     
-    <nav class="site-nav" id="siteNav" aria-label="Primary navigation">
+    <nav class="site-nav" id="siteNav" aria-label="Primary navigation" data-analytics-root data-analytics-section="Navigation">
         <div class="nav-inner">
-            <a class="nav-brand" href="#top" aria-label="Back to top">
+            <a class="nav-brand" href="#top" aria-label="Back to top" data-analytics-id="nav.home" data-analytics-label="Home navigation">
                 <span class="nav-brand-dot" aria-hidden="true">💫</span>
                 <span>Shoaib Akthar</span>
             </a>
             <ul class="nav-links">
-                <li><a class="nav-link" href="#personal-title">About</a></li>
-                <li><a class="nav-link" href="#professional-title">Experience</a></li>
-                <li><a class="nav-link" href="#photos-title">Photos</a></li>
-                <li><a class="nav-link" href="#family-title">Family</a></li>
-                <li><a class="nav-link" href="#contact-title">Contact</a></li>
+                <li><a class="nav-link" href="#personal-title" data-analytics-id="nav.about" data-analytics-label="About navigation">About</a></li>
+                <li><a class="nav-link" href="#professional-title" data-analytics-id="nav.experience" data-analytics-label="Experience navigation">Experience</a></li>
+                <li><a class="nav-link" href="#photos-title" data-analytics-id="nav.photos" data-analytics-label="Photos navigation">Photos</a></li>
+                <li><a class="nav-link" href="#family-title" data-analytics-id="nav.family" data-analytics-label="Family navigation">Family</a></li>
+                <li><a class="nav-link" href="#contact-title" data-analytics-id="nav.contact" data-analytics-label="Contact navigation">Contact</a></li>
             </ul>
         </div>
         <div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
     </nav>
 
     
-    <header class="bismillah-section" role="banner">
+    <header class="bismillah-section" role="banner" data-analytics-root data-analytics-section="Opening">
         <div class="bismillah-text" aria-label="Bismillah in Arabic">بِسْمِ اللهِ الرَّحْمٰنِ الرَّحِيْمِ</div>
         <div class="bismillah-translation">In the Name of Allah, The Most Gracious, The Most Merciful</div>
     </header>
 
     
-    <section class="hero" id="top" aria-label="Profile hero section">
+    <section class="hero" id="top" aria-label="Profile hero section" data-analytics-root data-analytics-section="Profile hero">
         <img 
             src="my-photo.jpg" 
             alt="Portrait of Shoaib Akthar" 
@@ -1181,7 +1181,7 @@
         </div>
     </section>
 
-    <main class="container" id="main-content">
+    <main class="container" id="main-content" data-analytics-root>
         
         <section class="section" aria-labelledby="personal-title" style="--reveal-delay: 0ms">
             <div class="section-header reveal">
@@ -1233,7 +1233,7 @@
             <div class="info-grid stagger">
                 <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Current Position</div>
-                    <div class="info-value">Cybersecurity Engineer<br><a href="https://www.linkedin.com/in/shoaib-akthar-shajahan/" target="_blank" rel="noopener noreferrer" style="font-size:0.75rem;color:var(--apple-medium-gray);text-decoration:none;margin-top:0.5rem;display:inline-block">LinkedIn →</a></div>
+                    <div class="info-value">Cybersecurity Engineer<br><a href="https://www.linkedin.com/in/shoaib-akthar-shajahan/" target="_blank" rel="noopener noreferrer" data-analytics-id="profile.linkedin" data-analytics-label="Professional LinkedIn" style="font-size:0.75rem;color:var(--apple-medium-gray);text-decoration:none;margin-top:0.5rem;display:inline-block">LinkedIn →</a></div>
                 </div>
                 <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Specialization</div>
@@ -1257,7 +1257,7 @@
                 <p class="section-subtitle">A Glimpse Into My Life</p>
             </div>
             <div class="photo-gallery stagger">
-                <a href="my-photo.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 1 of 5">
+                <a href="my-photo.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 1 of 5" data-analytics-id="gallery.photo-1" data-analytics-label="Open photo 1">
                     <img 
                         src="my-photo.jpg" 
                         alt="Shoaib Akthar - Photo 1 of 5"
@@ -1265,7 +1265,7 @@
                         decoding="async"
                     >
                 </a>
-                <a href="photo2.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 2 of 5">
+                <a href="photo2.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 2 of 5" data-analytics-id="gallery.photo-2" data-analytics-label="Open photo 2">
                     <img 
                         src="photo2.jpg" 
                         alt="Shoaib Akthar - Photo 2 of 5"
@@ -1273,7 +1273,7 @@
                         decoding="async"
                     >
                 </a>
-                <a href="photo3.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 3 of 5">
+                <a href="photo3.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 3 of 5" data-analytics-id="gallery.photo-3" data-analytics-label="Open photo 3">
                     <img 
                         src="photo3.jpg" 
                         alt="Shoaib Akthar - Photo 3 of 5"
@@ -1281,7 +1281,7 @@
                         decoding="async"
                     >
                 </a>
-                <a href="photo4.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 4 of 5">
+                <a href="photo4.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 4 of 5" data-analytics-id="gallery.photo-4" data-analytics-label="Open photo 4">
                     <img 
                         src="photo4.jpg" 
                         alt="Shoaib Akthar - Photo 4 of 5"
@@ -1289,7 +1289,7 @@
                         decoding="async"
                     >
                 </a>
-                <a href="photo5.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 5 of 5">
+                <a href="photo5.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 5 of 5" data-analytics-id="gallery.photo-5" data-analytics-label="Open photo 5">
                     <img 
                         src="photo5.jpg" 
                         alt="Shoaib Akthar - Photo 5 of 5"
@@ -1364,25 +1364,25 @@
                 <h2 class="contact-title" id="contact-title">Get In Touch</h2>
                 <p class="contact-subtitle">For Further Discussion</p>
                 <div class="contact-info">
-                    <strong>Phone -  Dad(India):</strong> <a href="tel:+919841152099" rel="noopener">+91 98411 52099</a>
+                    <strong>Phone -  Dad(India):</strong> <a href="tel:+919841152099" rel="noopener" data-analytics-id="contact.phone-dad" data-analytics-label="Call Dad in India">+91 98411 52099</a>
                 </div>
                 <div class="contact-info">
-                    <strong>Phone - Mom(India):</strong> <a href="tel:+919840552099" rel="noopener">+91 98405 52099</a>
+                    <strong>Phone - Mom(India):</strong> <a href="tel:+919840552099" rel="noopener" data-analytics-id="contact.phone-mom" data-analytics-label="Call Mom in India">+91 98405 52099</a>
                 </div>
                 <div class="contact-info">
-                    <strong>Phone (USA):</strong> <a href="tel:+19293728347" rel="noopener">+1 (929) 372-8347</a>
+                    <strong>Phone (USA):</strong> <a href="tel:+19293728347" rel="noopener" data-analytics-id="contact.phone-us" data-analytics-label="Call US phone">+1 (929) 372-8347</a>
                 </div>
             </div>
         </section>
     </main>
 
-    <footer style="text-align:center;padding:2rem 1rem;color:var(--apple-medium-gray);font-size:0.875rem;margin-top:4rem">
+    <footer data-analytics-root data-analytics-section="Footer" style="text-align:center;padding:2rem 1rem;color:var(--apple-medium-gray);font-size:0.875rem;margin-top:4rem">
         <p>© 2026 Shoaib Akthar. All Rights Reserved.</p>
-        <p style="margin-top:1rem;font-size:0.875rem"><a href="https://www.linkedin.com/in/shoaib-akthar-shajahan" target="_blank" rel="noopener noreferrer" style="color:#B3121F;text-decoration:none;display:inline-block;padding:0.25rem 0.5rem">LinkedIn →</a></p>
+        <p style="margin-top:1rem;font-size:0.875rem"><a href="https://www.linkedin.com/in/shoaib-akthar-shajahan" target="_blank" rel="noopener noreferrer" data-analytics-id="footer.linkedin" data-analytics-label="Footer LinkedIn" style="color:#B3121F;text-decoration:none;display:inline-block;padding:0.25rem 0.5rem">LinkedIn →</a></p>
     </footer>
 
     
-    <button class="back-to-top" id="backToTop" type="button" aria-label="Back to top">
+    <button class="back-to-top" id="backToTop" type="button" aria-label="Back to top" data-analytics-root data-analytics-section="Page controls" data-analytics-id="page.back-to-top" data-analytics-label="Back to top">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
     </button>
 
@@ -1622,13 +1622,16 @@
         var WORKER_URL = 'https://pageview-logger.shoaibtest2.workers.dev';
         if (!WORKER_URL) return;
         var LOG_KEY = 'pv_b94dc26a696d248c905550a485ac8717';
-        var pageUrl = location.href;
+        var pageUrl = location.origin + location.pathname;
 
         // Stable visitor id, persisted on THIS origin (localStorage is first-party, so it
         // survives third-party cookie blocking that drops the worker's cross-site cookie).
         // The server assigns the id on /log-visit and we echo it back on every call.
         var vid = null;
         try { vid = localStorage.getItem('_pv_vid') || null; } catch (e) {}
+        function tabGet(key) { try { return sessionStorage.getItem(key); } catch (e) { return null; } }
+        function tabSet(key, value) { try { sessionStorage.setItem(key, value); } catch (e) {} }
+        var pendingEvents = [];
 
         function post(path, payload, cb) {
             try {
@@ -1646,10 +1649,17 @@
                 }).catch(function () { if (cb) cb(null); });
             } catch (e) { if (cb) cb(null); }
         }
+        function sendEvent(payload) {
+            if (!vid) { if (pendingEvents.length < 30) pendingEvents.push(payload); return; }
+            post('/event', payload);
+        }
+        function flushEvents() {
+            while (vid && pendingEvents.length) post('/event', pendingEvents.shift());
+        }
 
         // One pageview per tab session
-        if (!sessionStorage.getItem('_pv_logged')) {
-            sessionStorage.setItem('_pv_logged', '1');
+        if (!tabGet('_pv_logged') || !vid) {
+            tabSet('_pv_logged', '1');
             post('/log-visit', { referrer: document.referrer || null }, function (res) {
                 if (res && res.visitor_id && /^fp-[0-9a-f]{12}$/.test(res.visitor_id)) {
                     vid = res.visitor_id;
@@ -1661,6 +1671,7 @@
                     vid = 'fp-' + r;
                     try { localStorage.setItem('_pv_vid', vid); } catch (e) {}
                 }
+                flushEvents();
                 startBeat();
             });
         } else {
@@ -1668,17 +1679,17 @@
         }
 
         // Engagement: session id persists across reloads within the same tab
-        var sid = sessionStorage.getItem('_pv_sid');
+        var sid = tabGet('_pv_sid');
         if (!sid) {
             sid = (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
-            sessionStorage.setItem('_pv_sid', sid);
+            tabSet('_pv_sid', sid);
         }
 
         // Heartbeat every 30s while tab is visible
         var visible = true;
         var beatTimer = null;
         function sendBeat() {
-            if (visible) post('/event', { session_id: sid, event_type: 'heartbeat' });
+            if (visible) sendEvent({ session_id: sid, event_type: 'heartbeat' });
         }
         function startBeat() {
             if (beatTimer) return;
@@ -1693,67 +1704,94 @@
         document.addEventListener('visibilitychange', function () {
             if (document.hidden) {
                 visible = false; stopBeat();
-                post('/event', { session_id: sid, event_type: 'pagehide' });
+                sendEvent({ session_id: sid, event_type: 'pagehide' });
             } else {
                 visible = true;
-                post('/event', { session_id: sid, event_type: 'pageshow' });
+                sendEvent({ session_id: sid, event_type: 'pageshow' });
                 startBeat();
             }
         });
 
-        // Clicks: delegated, throttled to one per second
-        var lastClick = 0;
-        document.addEventListener('click', function (e) {
-            var now = Date.now();
-            if (now - lastClick < 1000) return; // throttle
-            lastClick = now;
-            var t = e.target;
-            if (!t || t.nodeType !== 1) t = (t && t.parentElement) ? t.parentElement : document.body;
-            var label = (t.tagName || '').toLowerCase();
-            if (t.id) label += '#' + t.id;
-            if (t.getAttribute('role')) label += '[' + t.getAttribute('role') + ']';
-            if (t.textContent) {
-                var txt = t.textContent.trim().slice(0, 30);
-                if (txt) label += ' "' + txt + '"';
+        function clickPath(e) {
+            if (typeof e.composedPath === 'function') return e.composedPath();
+            var path = [], node = e.target;
+            while (node) { path.push(node); node = node.parentElement; }
+            return path;
+        }
+        function cleanClickName(value) {
+            var name = String(value || '').replace(/\s+/g, ' ').trim();
+            if (!name || name.length > 60 || /@|https?:|(?:\d[\s().-]*){6,}/i.test(name)) return '';
+            return name;
+        }
+        function clickDestination(control, named) {
+            if (!control || !control.getAttribute) return '';
+            var raw = control.getAttribute('href');
+            if (!raw) return '';
+            try {
+                var url = new URL(raw, location.href);
+                if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+                var hash = /^#[a-zA-Z0-9_-]{1,64}$/.test(url.hash) ? url.hash : '';
+                if (url.origin === location.origin) return url.origin + url.pathname + hash;
+                return named ? url.origin + url.pathname : url.origin;
+            } catch (error) { return ''; }
+        }
+        function clickElement(node) { return node && node.nodeType === 1; }
+        function clickMatches(node, selector) { return clickElement(node) && typeof node.matches === 'function' && node.matches(selector); }
+        function resolveClick(e) {
+            var path = clickPath(e), elements = [], i;
+            for (i = 0; i < path.length; i++) if (clickElement(path[i])) elements.push(path[i]);
+            var owned = false, widget = false, control = null;
+            for (i = 0; i < elements.length; i++) {
+                if (elements[i].hasAttribute && elements[i].hasAttribute('data-analytics-root')) owned = true;
+                if (clickMatches(elements[i], '.fancybox__container')) widget = true;
+                if (!control && elements[i].hasAttribute && elements[i].hasAttribute('data-analytics-id')) control = elements[i];
             }
-            // Which part of the page was clicked — nearest section heading
-            var section = '';
-            var sec = (typeof t.closest === 'function') ? t.closest('section') : null;
-            if (sec) {
-                var st = sec.querySelector ? sec.querySelector('.section-title') : null;
-                if (st && st.textContent) section = st.textContent.trim().slice(0, 40);
-                if (!section && sec.getAttribute('aria-label')) section = sec.getAttribute('aria-label').slice(0, 40);
-                if (!section && sec.id) section = sec.id.slice(0, 40);
-            }
-            if (!section) {
-                var up = t.parentElement;
-                while (up && up !== document.body) {
-                    if (up.id) { section = up.id.slice(0, 40); break; }
-                    up = up.parentElement;
+            if (!control) {
+                for (i = 0; i < elements.length; i++) {
+                    if (clickMatches(elements[i], 'a[href],button,summary,[role="button"],[role="link"]')) { control = elements[i]; break; }
                 }
             }
-            if (!section) section = 'page';
-            // Element class (handles SVGAnimatedString on svg nodes)
-            var cls = (typeof t.className === 'string') ? t.className
-                : (t.className && t.className.baseVal) ? t.className.baseVal : '';
-            cls = String(cls).slice(0, 60);
-            var a = (typeof t.closest === 'function') ? t.closest('a') : null;
-            var href = (a && a.href) ? a.href.slice(0, 200) : '';
-            post('/event', {
-                session_id: sid,
-                event_type: 'click',
-                x: e.clientX | 0,
-                y: e.clientY | 0,
-                target: label,
-                section: section,
-                cls: cls,
-                href: href
-            });
+            var source = owned ? 'site' : widget ? 'site-widget' : 'outside';
+            var actionId = source !== 'outside' && control && control.getAttribute ? control.getAttribute('data-analytics-id') || '' : '';
+            var label = source !== 'outside' && actionId ? cleanClickName(control.getAttribute('data-analytics-label')) : '';
+            var quality = label ? 'named' : control && source !== 'outside' ? 'inferred' : 'unknown';
+            if (!label && quality === 'inferred') {
+                label = cleanClickName(control.getAttribute('aria-label')) || cleanClickName(control.getAttribute('title'));
+                if (!label) label = clickMatches(control, 'a[href],[role="link"]') ? 'Unlabelled link' : 'Unlabelled control';
+            }
+            if (!label) label = source === 'outside' ? 'Unidentified element outside site content' : 'Page area (not a control)';
+            var section = source === 'outside' ? 'Outside site content' : '';
+            if (source !== 'outside') {
+                for (i = 0; i < elements.length && !section; i++) {
+                    var node = elements[i];
+                    if (node.getAttribute) section = cleanClickName(node.getAttribute('data-analytics-section'));
+                    if (!section && clickMatches(node, 'section')) {
+                        var heading = node.querySelector ? node.querySelector('.section-title') : null;
+                        section = cleanClickName(heading && heading.textContent) || cleanClickName(node.getAttribute('aria-label')) || cleanClickName(node.id);
+                    }
+                }
+                if (!section) section = widget ? 'Photo gallery' : 'Page';
+            }
+            var pointer = e.detail !== 0;
+            return {
+                session_id: sid, event_type: 'click',
+                x: pointer && isFinite(e.clientX) ? Math.round(e.clientX) : null,
+                y: pointer && isFinite(e.clientY) ? Math.round(e.clientY) : null,
+                viewport_w: window.innerWidth || null, viewport_h: window.innerHeight || null,
+                interaction: pointer ? 'pointer' : 'non-pointer',
+                target: label, section: section, action_id: quality === 'named' ? actionId : '',
+                label_quality: quality, source: source,
+                href: source === 'outside' ? '' : clickDestination(control, quality === 'named')
+            };
+        }
+        document.addEventListener('click', function (e) {
+            if (e.isTrusted === false) return;
+            sendEvent(resolveClick(e));
         }, true);
 
         // Final pagehide on tab close / navigation
         window.addEventListener('pagehide', function () {
-            post('/event', { session_id: sid, event_type: 'pagehide' });
+            sendEvent({ session_id: sid, event_type: 'pagehide' });
         });
     })();
     </script>

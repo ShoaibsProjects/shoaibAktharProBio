@@ -68,6 +68,7 @@ test('manual links preserve raw visits and can be separated', async () => {
   CREATE TABLE rate_limits (ip TEXT, scope TEXT, bucket INTEGER, count INTEGER, PRIMARY KEY(ip,scope,bucket));`);
   sqlite.exec(readFileSync(new URL('../migrations/0001_identity_links.sql', import.meta.url), 'utf8'));
   sqlite.exec(readFileSync(new URL('../migrations/0002_visit_identity_overrides.sql', import.meta.url), 'utf8'));
+  sqlite.exec(readFileSync(new URL('../migrations/0003_click_semantics.sql', import.meta.url), 'utf8'));
   const insert = sqlite.prepare("INSERT INTO page_views (visitor_id, city, region, country, device_type, os, browser) VALUES (?, 'Austin', 'Texas', 'US', 'Mobile', 'iOS', 'Safari')");
   insert.run(A); insert.run(A); insert.run(B); insert.run(C);
   sqlite.prepare("UPDATE page_views SET user_agent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Version/26.2 Mobile/15E148 Safari/604.1 Brave', os = 'macOS', browser = 'Safari' WHERE id = 1").run();
