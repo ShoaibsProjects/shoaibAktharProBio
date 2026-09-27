@@ -18,6 +18,17 @@
     }
   ],
 
+  // Fast per-location gate: reject event floods before the D1-backed limiter
+  // and analytics insert can consume database writes. D1 remains a secondary
+  // cross-request guard; Cloudflare's binding is approximate, not global accounting.
+  "ratelimits": [
+    {
+      "name": "EVENT_INGEST_LIMITER",
+      "namespace_id": "964567313391115",
+      "simple": { "limit": 10, "period": 60 }
+    }
+  ],
+
   "vars": {
     "PAGE_URL": "https://shoaibakthar.pro",
     "ALLOWED_ORIGINS": "https://shoaibsprojects.github.io,https://shoaibakthar.pro,http://localhost",

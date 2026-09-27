@@ -1,4 +1,4 @@
-var VERSION = '3.34.0'; // bump when you change the worker code
+var VERSION = '3.35.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -33,7 +33,8 @@ var VERSION = '3.34.0'; // bump when you change the worker code
  *
  * SECURITY MODEL
  * ──────────────
- *   • All writes: Origin whitelist + shared-secret key (LOG_KEY)
+ *   • Anonymous telemetry: exact Origin/CORS allowlist, public client marker,
+ *     bounded validation, and per-IP edge/D1 rate limits (not authentication)
  *   • Session auth: HMAC-SHA-256 tokens, server-side JTI stored in D1
  *   • Rate limits: Atomic UPSERT per IP, no race-window
  *   • Bot blocking: 34 patterns filtered before DB write
@@ -73,7 +74,7 @@ var VERSION = '3.34.0'; // bump when you change the worker code
  *
  * @module pageview-logger
  * @author Shoaib Akthar
- * @version 3.34.0
+ * @version 3.35.0
  */
 
 export default {
@@ -81,8 +82,6 @@ export default {
     const start = Date.now();
     const url = new URL(request.url);
     const path = url.pathname;
-    const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-    const ua = request.headers.get('User-Agent') || '';
 
     try {
       let response;
@@ -125,8 +124,6 @@ export default {
         l: path,
         s: response.status,
         ms: elapsed,
-        ip,
-        ua: ua.slice(0, 128),
       }));
       return response;
 
@@ -136,7 +133,6 @@ export default {
         l: path,
         error: err instanceof Error ? err.message : String(err),
         ms: elapsed,
-        ip,
       }));
       return new Response('Internal Server Error', { status: 500, headers: securityHeaders() });
     }
@@ -186,7 +182,7 @@ function securityHeaders(extra = {}) {
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Cross-Origin-Resource-Policy': 'same-origin',
     'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
-    'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com",
+    'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com https://www.openstreetmap.org; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com",
     ...extra,
   };
 }
@@ -333,7 +329,7 @@ async function handleLogVisit(request, env) {
   // 1) Block known bots/crawlers before they cost any DB writes
   const ua = request.headers.get('User-Agent') || '';
   if (isBot(ua)) {
-    console.log(JSON.stringify({ event: 'bot_blocked', ip, ua: ua.slice(0, 100) }));
+    console.log(JSON.stringify({ event: 'bot_blocked' }));
     return Response.json({ ok: false, reason: 'bot' }, { status: 403, headers: base });
   }
 
@@ -362,7 +358,8 @@ async function handleLogVisit(request, env) {
     return Response.json({ ok: false, reason: 'bad_json' }, { status: 400, headers: base });
   }
 
-  // 5) Shared-secret check prevents unauthenticated writes
+  // 5) This browser-visible marker filters accidental/unscripted writes; it is
+  // not a secret or an authentication boundary.
   if (!body.key || !(await constantTimeEqual(String(body.key), env.LOG_KEY))) {
     return Response.json({ ok: false, reason: 'unauthorized' }, { status: 401, headers: base });
   }
@@ -382,6 +379,8 @@ async function handleLogVisit(request, env) {
   }
 
   const cf = request.cf || {};
+  const latitude = geoCoordinate(cf.latitude, -90, 90);
+  const longitude = geoCoordinate(cf.longitude, -180, 180);
   const language = (request.headers.get('Accept-Language') || '').split(',')[0]?.trim() || null;
   const uaParsed = parseUADetailed(ua);
   let { id: visitorId, fromCookie } = await getVisitorId(request, ua, language, cf);
@@ -417,8 +416,8 @@ async function handleLogVisit(request, env) {
     uaParsed.device,
     uaParsed.os,
     uaParsed.browser,
-    cf.latitude ? String(cf.latitude) : null,
-    cf.longitude ? String(cf.longitude) : null,
+    latitude === null ? null : String(latitude),
+    longitude === null ? null : String(longitude),
     cf.postalCode || null,
     cf.asOrganization || null,
     language,
@@ -426,7 +425,7 @@ async function handleLogVisit(request, env) {
     colo
   ).run();
 
-  console.log(JSON.stringify({ event: 'visit', ip, city: cf.city || null, country: cf.country || null, known: fromCookie, vid: visitor_id_preview(visitorId) }));
+  console.log(JSON.stringify({ event: 'visit', known: fromCookie }));
 
   const response = Response.json({ ok: true, visitor_id: visitorId }, { headers: base });
 
@@ -445,6 +444,12 @@ async function handleLogVisit(request, env) {
 
 function eventText(value, max) {
   return typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) : '';
+}
+
+function geoCoordinate(value, min, max) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max ? number : null;
 }
 
 function eventInteger(value, min, max) {
@@ -492,7 +497,21 @@ async function handleEvent(request, env) {
   const ua = request.headers.get('User-Agent') || '';
   if (isBot(ua)) return Response.json({ ok: false, reason: 'bot' }, { status: 403, headers: base });
 
-  // Rate limit: max 60 events per 60s per IP (covers heartbeats at 30s + clicks)
+  // Enforce an edge-local ceiling before touching D1. The D1 limiter below is
+  // still the shared secondary guard, but every D1-backed rate-limit check is
+  // itself a write and cannot protect the database from a sustained flood.
+  let edgeLimit;
+  try {
+    if (!env.EVENT_INGEST_LIMITER) throw new Error('event limiter binding is missing');
+    edgeLimit = await env.EVENT_INGEST_LIMITER.limit({ key: ip });
+  } catch (_) {
+    return Response.json({ ok: false, reason: 'rate_limit_unavailable' }, { status: 503, headers: base });
+  }
+  if (!edgeLimit.success) {
+    return Response.json({ ok: false, reason: 'rate_limited' }, { status: 429, headers: base });
+  }
+
+  // Shared D1 secondary limit: max 60 events/minute/IP across Worker locations.
   const allowed = await checkRateLimit(env.DB, ip, 'events', 60, 60);
   if (!allowed) return Response.json({ ok: false, reason: 'rate_limited' }, { status: 429, headers: base });
 
@@ -505,7 +524,7 @@ async function handleEvent(request, env) {
     return Response.json({ ok: false, reason: 'bad_json' }, { status: 400, headers: base });
   }
 
-  // Same shared-secret gate as /log-visit
+  // Same public client marker as /log-visit; event ingestion is anonymous.
   if (!body.key || !(await constantTimeEqual(String(body.key), env.LOG_KEY))) {
     return Response.json({ ok: false, reason: 'unauthorized' }, { status: 401, headers: base });
   }
@@ -758,21 +777,9 @@ async function handleRestoreVisit(request, env) {
 
 // Reset all engagement data (clicks, heartbeats, pagehides, sessions). Session-authenticated.
 async function handleResetEngagement(request, env) {
-  const h = securityHeaders({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
-  if (request.method !== 'POST') return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: h });
-
-  // CSRF: only accept requests originated from our own dashboard
-  const origin = request.headers.get('Origin') || '';
-  const host = request.headers.get('Host') || '';
-  if (origin && !origin.includes('pageview-logger') && !host.includes('pageview-logger')) {
-    return Response.json({ error: 'forbidden' }, { status: 403, headers: h });
-  }
-
-  const session = sessionTokenFrom(request.headers.get('Cookie') || '');
-  if (!session || !(await verifySessionToken(session, env))) {
-    return Response.json({ error: 'unauthorized' }, { status: 401, headers: h });
-  }
+  const mutation = await identityMutationRequest(request, env);
+  if (mutation.response) return mutation.response;
+  const h = mutation.headers;
 
   const r = await env.DB.prepare('DELETE FROM page_engagement').run();
   const deleted = (r && r.changes) || 0;
@@ -917,13 +924,13 @@ async function handleDashboard(request, env) {
 
     const key = body?.get?.('key') || body?.key || '';
     if (!(await constantTimeEqual(String(key), env.DASHBOARD_KEY))) {
-      console.warn(JSON.stringify({ event: 'login_fail', ip }));
+      console.warn(JSON.stringify({ event: 'login_fail' }));
       return new Response(loginPage('Invalid key', env), {
         status: 401,
         headers: htmlHeaders,
       });
     }
-    console.log(JSON.stringify({ event: 'login_ok', ip }));
+    console.log(JSON.stringify({ event: 'login_ok' }));
     const token = await createSessionToken(env);
     // Safari/ITP deliberately drops Set-Cookie when it rides on a 303/302 redirect
     // (known WebKit behavior — works in Chrome/Brave). So we store the session cookie
@@ -983,22 +990,17 @@ async function verifyTurnstile(env, token) {
 }
 
 async function renderDashboard(db) {
-  try {
-    const [totals, topCountries, recentVisits, trend, referrers, engagement, profiles, identityEvents] = await Promise.all([
-      queryStats(db),
-      queryTopCountries(db),
-      queryRecent(db),
-      queryTrend(db, 30),
-      queryTopReferrers(db),
-      queryEngagement(db),
-      queryVisitorProfiles(db),
-      queryIdentityEvents(db),
-    ]);
-    return dashboardHtml(totals, topCountries, recentVisits, trend, referrers, engagement, profiles, identityEvents);
-  } catch (err) {
-    console.error('renderDashboard error:', err.stack || err.message);
-    return '<html><body><h1>500</h1><pre>' + (err.stack || err.message) + '</pre></body></html>';
-  }
+  const [totals, topCountries, recentVisits, trend, referrers, engagement, profiles, identityEvents] = await Promise.all([
+    queryStats(db),
+    queryTopCountries(db),
+    queryRecent(db),
+    queryTrend(db, 30),
+    queryTopReferrers(db),
+    queryEngagement(db),
+    queryVisitorProfiles(db),
+    queryIdentityEvents(db),
+  ]);
+  return dashboardHtml(totals, topCountries, recentVisits, trend, referrers, engagement, profiles, identityEvents);
 }
 
 // ── GET /stats (JSON) ──
@@ -1045,7 +1047,7 @@ function handleHealth(request, env) {
   return Response.json({
     status: 'ok',
     ts: new Date().toISOString(),
-    bindings: { d1: 'DB' in env, dashKey: 'DASHBOARD_KEY' in env, turnstile: 'TURNSTILE_SECRET' in env, logKey: 'LOG_KEY' in env },
+    bindings: { d1: 'DB' in env, dashKey: 'DASHBOARD_KEY' in env, turnstile: 'TURNSTILE_SECRET' in env, logKey: 'LOG_KEY' in env, eventLimiter: 'EVENT_INGEST_LIMITER' in env },
   }, { headers: h });
 }
 
@@ -1149,7 +1151,9 @@ async function queryEngagement(db) {
             pe.action_id, pe.label_quality, pe.source, pe.interaction, pe.viewport_w, pe.viewport_h,
             (SELECT v.city    FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS city,
             (SELECT v.region  FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS region,
-            (SELECT v.country FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS country
+            (SELECT v.country FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS country,
+            (SELECT v.latitude FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS latitude,
+            (SELECT v.longitude FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS longitude
      FROM page_engagement pe
      LEFT JOIN visitor_identity_links il ON il.visitor_id = pe.visitor_id
      WHERE pe.event_type = 'click' AND pe.target IS NOT NULL AND pe.target != ''
@@ -1500,7 +1504,8 @@ const DASHBOARD_CLIENT_JS = String.raw`
   function refLinkH(r,n){return r?'<a href="'+escH(r)+'" rel="noreferrer" style="color:var(--accent);text-decoration:none">'+truncH(escH(r),n)+'</a>':'Direct';}
   function agoH(t){if(!t)return'';var diff=Math.floor((Date.now()-new Date(t+'Z').getTime())/1000);if(diff<0)return'just now';if(diff<60)return diff+'s ago';if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';return Math.floor(diff/86400)+'d ago';}
   function devH(v){var d=v.device_type||'Unknown';var o=v.os||'';var b=v.browser||'';var line=[o,b].filter(Boolean).join(' · ');return '<span class="badge">'+escH(d)+'</span>'+(line?' '+escH(line):(v.user_agent?(' '+escH(uaH(v.user_agent))):''));}
-  function locH(v){var place=[v.city,v.region,v.country].filter(Boolean).join(', ');if(!place)return '—';return escH(place)+'<div class="identity-note">IP-based estimate · <a href="https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(place)+'" target="_blank" rel="noreferrer">Area map</a></div>';}
+  function clientGeoCoordinate(value,min,max){if(value===null||value===undefined||String(value).trim()==='')return null;var number=Number(value);return Number.isFinite(number)&&number>=min&&number<=max?number:null;}
+  function locH(v){var place=[v.city,v.region,v.country].filter(Boolean).join(', ');var lat=clientGeoCoordinate(v.latitude,-90,90),lon=clientGeoCoordinate(v.longitude,-180,180);if(!place&&lat===null&&lon===null)return '—';place=place||'Approximate area';var map=lat!==null&&lon!==null?'<button type="button" class="area-map-button" data-map-lat="'+lat+'" data-map-lon="'+lon+'" data-map-place="'+escH(place)+'" aria-label="View approximate IP area on map">View map</button>':'<span class="map-unavailable">Coordinates unavailable</span>';return escH(place)+'<div class="location-meta"><span>IP-based estimate</span>'+map+'</div>';}
   function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
   // ── Search filter state ──
   var _allRecent=[];
@@ -1599,6 +1604,35 @@ const DASHBOARD_CLIENT_JS = String.raw`
   setInterval(refresh,60000);
   var si=document.getElementById('recentSearch');
   if(si)si.addEventListener('input',renderRecent);
+
+  var areaMapDialog=document.getElementById('areaMapDialog');
+  var areaMapFrame=document.getElementById('areaMapFrame');
+  function areaMapEmbedUrl(latitude,longitude){
+    // IP geolocation is city-level at best; show context rather than an exact-looking pin.
+    var centerLat=Math.max(-84.9,Math.min(84.9,latitude));
+    var latSpan=.45,lonSpan=Math.min(1.5,latSpan/Math.max(Math.cos(centerLat*Math.PI/180),.25));
+    var west=Math.max(-180,longitude-lonSpan),east=Math.min(180,longitude+lonSpan);
+    var south=Math.max(-85,centerLat-latSpan),north=Math.min(85,centerLat+latSpan);
+    var params=new URLSearchParams({bbox:[west,south,east,north].join(','),layer:'mapnik'});
+    return 'https://www.openstreetmap.org/export/embed.html?'+params.toString();
+  }
+  if(areaMapDialog){
+    document.addEventListener('click',function(e){
+      var button=e.target.closest('.area-map-button');if(!button)return;
+      e.preventDefault();
+      var latitude=clientGeoCoordinate(button.getAttribute('data-map-lat'),-90,90);
+      var longitude=clientGeoCoordinate(button.getAttribute('data-map-lon'),-180,180);
+      if(latitude===null||longitude===null)return;
+      var place=button.getAttribute('data-map-place')||'Approximate area';
+      document.getElementById('areaMapPlace').textContent=place+' · IP-based estimate';
+      areaMapFrame.title='Map of the approximate IP-based area: '+place;
+      areaMapFrame.src=areaMapEmbedUrl(latitude,longitude);
+      areaMapDialog.showModal();
+    });
+    document.getElementById('areaMapClose').addEventListener('click',function(){areaMapDialog.close();});
+    areaMapDialog.addEventListener('click',function(e){if(e.target===areaMapDialog)areaMapDialog.close();});
+    areaMapDialog.addEventListener('close',function(){areaMapFrame.removeAttribute('src');});
+  }
 
   var identityDialog=document.getElementById('identityDialog');
   var identityState=null;
@@ -1903,7 +1937,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
 <title>Page View Dashboard</title>
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E📊%3C/text%3E%3C/svg%3E">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src https://www.openstreetmap.org">
 <style>
   *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
   :root{--bg:#eef0f6;--text:#1d1d1f;--muted:#6e6e73;--dim:#1d1d1f;
@@ -2132,6 +2166,17 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .identity-history li{font-size:0.73rem;color:var(--muted);line-height:1.45}
   .identity-dialog{width:min(92vw,530px);max-height:85vh;overflow:auto;margin:auto;padding:1.4rem;border:1px solid var(--border);border-radius:22px;background:var(--bg);color:var(--text);box-shadow:0 30px 90px rgba(0,0,0,.35);font-family:inherit}
   .identity-dialog::backdrop{background:rgba(10,15,30,.65);backdrop-filter:blur(4px)}
+  .area-map-dialog{width:min(94vw,920px);max-height:94vh}
+  .map-dialog-header{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:.9rem}
+  .map-dialog-header h2{margin-bottom:.25rem}
+  .map-close{flex:none;border:1px solid var(--border-soft);border-radius:10px;padding:.55rem .85rem;background:var(--glass-bg);color:var(--text);font:inherit;font-size:.78rem;font-weight:700;cursor:pointer}
+  .area-map-frame{display:block;width:100%;height:min(62vh,560px);min-height:280px;border:1px solid var(--border-soft);border-radius:16px;background:var(--bg)}
+  html[data-theme="dark"] .area-map-frame{filter:invert(.9) hue-rotate(180deg) saturate(.72) brightness(.88) contrast(.92)}
+  .location-meta{display:flex;align-items:center;gap:.45rem;margin-top:.25rem;color:var(--muted);font-size:.68rem;white-space:normal}
+  .area-map-button{border:1px solid var(--border-soft);border-radius:999px;padding:.18rem .55rem;background:var(--accent-soft);color:var(--accent);font:inherit;font-size:.67rem;font-weight:700;cursor:pointer;white-space:nowrap}
+  .area-map-button:hover{border-color:var(--accent);background:var(--accent-soft)}
+  .area-map-button:focus-visible,.map-close:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  .map-unavailable{font-size:.66rem;color:var(--muted)}
   .identity-dialog h2{font-size:1.2rem;margin-bottom:0.5rem}
   .identity-dialog p{font-size:0.8rem;line-height:1.55;color:var(--muted)}
   .identity-dialog label{display:block;font-size:0.77rem;font-weight:700;margin:1rem 0 0.35rem}
@@ -2164,7 +2209,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .visit-editor{margin-top:1rem;padding:1rem;border:1px solid var(--accent);border-radius:14px;background:var(--accent-soft)}
   .visit-editor[hidden]{display:none}
   .visit-editor .identity-dialog-actions{margin-top:.75rem}
-  @media(max-width:600px){body{padding:1rem}.top-bar{top:0.5rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}.identity-review{grid-template-columns:1fr}}
+  @media(max-width:600px){body{padding:1rem}.top-bar{top:0.5rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}.identity-review{grid-template-columns:1fr}.area-map-dialog{padding:1rem}.area-map-frame{height:56vh;min-height:240px}}
   @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -2186,7 +2231,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div class="stat-value" id="statToday">${totals.today}</div><div class="stat-label">Today</div></div>
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="stat24h">${totals.last24h}</div><div class="stat-label">Last 24 Hours</div></div>
     <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="stat-value" id="statTotal">${totals.total}</div><div class="stat-label">Total Views</div></div>
-    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></div><div class="stat-value" id="statUnique">${totals.unique}</div><div class="stat-label">Unique Visitors</div></div>
+    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></div><div class="stat-value" id="statUnique">${totals.unique}</div><div class="stat-label">Visitor profiles</div></div>
   </div>
   ${engagementHtml}
 
@@ -2268,6 +2313,13 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     <div class="identity-dialog-actions"><button type="button" id="visitClose">Close</button></div>
   </dialog>
 
+  <dialog class="identity-dialog area-map-dialog" id="areaMapDialog" aria-labelledby="areaMapTitle">
+    <div class="map-dialog-header"><div><h2 id="areaMapTitle">Approximate visitor area</h2><p id="areaMapPlace">IP-based estimate</p></div><button type="button" class="map-close" id="areaMapClose">Close</button></div>
+    <div class="identity-signal">This view is centered on an IP-based estimate. It may indicate a nearby city or network gateway—not the person’s exact device location.</div>
+    <iframe id="areaMapFrame" class="area-map-frame" title="Map of the approximate IP-based area" loading="lazy" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin"></iframe>
+    <p class="identity-note" style="margin-top:.65rem">Map by OpenStreetMap contributors. No exact-location marker is shown. Loaded only when you open an area map.</p>
+  </dialog>
+
   <div class="grid-2">
     <div class="card">
       <h2>Views — last 30 days</h2>
@@ -2332,12 +2384,18 @@ function truncate(s, n) {
   return s.length > n ? s.slice(0, n) + '...' : s;
 }
 
-// City/region from IP geolocation is approximate, not a visitor's GPS position.
+// Cloudflare's city and coordinates are IP geolocation estimates, not device GPS.
 function coordH(v) {
-  const place = [v.city, v.region, v.country].filter(Boolean).join(', ');
-  if (!place) return '';
-  return '<div class="identity-note">IP-based estimate · <a href="https://www.google.com/maps/search/?api=1&query='
-    + encodeURIComponent(place) + '" target="_blank" rel="noreferrer">Area map</a></div>';
+  let place = [v.city, v.region, v.country].filter(Boolean).join(', ');
+  const latitude = geoCoordinate(v.latitude, -90, 90);
+  const longitude = geoCoordinate(v.longitude, -180, 180);
+  if (!place && latitude === null && longitude === null) return '';
+  place = place || 'Approximate area';
+  const map = latitude !== null && longitude !== null
+    ? '<button type="button" class="area-map-button" data-map-lat="' + latitude + '" data-map-lon="' + longitude
+      + '" data-map-place="' + esc(place) + '" aria-label="View approximate IP area on map">View map</button>'
+    : '<span class="map-unavailable">Coordinates unavailable</span>';
+  return '<div class="location-meta"><span>IP-based estimate</span>' + map + '</div>';
 }
 
 // User‑agent parser — returns structured fields for DB storage
