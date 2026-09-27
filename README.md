@@ -1,14 +1,14 @@
 # Shoaib Akthar — Profile
 
-A responsive personal profile built with semantic HTML, CSS, and browser-native JavaScript.
+A responsive personal profile built with HTML, CSS, and JavaScript.
 
 **Live site:** [shoaibsprojects.github.io/shoaibAktharProBio](https://shoaibsprojects.github.io/shoaibAktharProBio/)
 
 ## Design and features
 
 - Adapts to light and dark appearance and small screens.
-- Provides a touch-scroll section navigation, reduced-motion support, and an accessible native photo gallery.
-- Uses optimized WebP images and system fonts; it has no font or gallery CDN dependency.
+- Shows the original full-resolution JPEG photos in a Fancybox gallery.
+- Uses Google Fonts and Fancybox assets from their hosted services.
 - Opens approximate location searches in Apple Maps from the private dashboard. These are broad IP-based estimates, not device GPS locations.
 
 ## Site activity and privacy
