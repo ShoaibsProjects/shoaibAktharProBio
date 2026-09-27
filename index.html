@@ -4,7 +4,11 @@
     <script>document.documentElement.classList.add('js');</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; connect-src 'self' https://pageview-logger.shoaibtest2.workers.dev;">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://pageview-logger.shoaibtest2.workers.dev;">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <!-- Removed <meta http-equiv="X-Frame-Options" content="DENY"> because X-Frame-Options must be set as an HTTP header, not via a <meta> tag. Set this header on the server if needed. -->
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
     <meta http-equiv="Permissions-Policy" content="geolocation=(), microphone=(), camera=()">
     <meta name="description" content="Shoaib Akhtar Guided by faith, grounded in values.">
@@ -14,15 +18,21 @@
     <meta property="og:type" content="website">
     <meta property="og:title" content="Shoaib Akhtar | Profile">
     <meta property="og:description" content="Shoaib Akhtar — Guided by faith, grounded in values.">
-    <meta property="og:image" content="https://shoaibakthar.pro/my-photo.webp">
+    <meta property="og:image" content="https://shoaibakthar.pro/my-photo.jpg">
     <meta property="og:url" content="https://shoaibakthar.pro/">
     <meta name="twitter:card" content="summary_large_image">
     
     <title>Shoaib Akhtar | Profile</title>
     
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E💫%3C/text%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&family=Amiri:wght@400;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700&family=Amiri:wght@400;700&display=swap" rel="stylesheet"></noscript>
     <meta name="theme-color" content="#fbfbfd" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#1d1d1f" media="(prefers-color-scheme: dark)">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fancyapps/ui@5.0/dist/fancybox/fancybox.css" media="print" onload="this.media='all'">
+    <noscript><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fancyapps/ui@5.0/dist/fancybox/fancybox.css"></noscript>
     
     <style>
         *, *::before, *::after {
@@ -106,7 +116,7 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', 'Inter', system-ui, sans-serif;
             color: var(--apple-text);
             line-height: 1.6;
             background: var(--apple-white);
@@ -150,7 +160,7 @@
         }
 
         .bismillah-text {
-            font-family: 'Geeza Pro', 'Noto Naskh Arabic', serif;
+            font-family: 'Amiri', serif;
             font-size: clamp(1.5rem, 4vw, 2rem);
             color: var(--apple-text);
             margin-bottom: var(--space-sm);
@@ -162,15 +172,6 @@
             color: var(--apple-dark-gray);
             letter-spacing: 0.15em;
             text-transform: uppercase;
-        }
-
-        .privacy-note {
-            max-width: 760px;
-            margin: 1.25rem auto 0;
-            padding: 0 1rem;
-            line-height: 1.6;
-            font-size: 0.75rem;
-            color: var(--apple-medium-gray);
         }
 
         
@@ -432,21 +433,134 @@
         
         
         
-        .gallery-lightbox { width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); border: 0; color: #fff; background: rgba(16, 17, 20, .96); }
-        .gallery-lightbox[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
-        .gallery-lightbox::backdrop { background: rgba(0, 0, 0, .84); }
-        .gallery-lightbox-top { display: flex; justify-content: flex-end; }
-        .gallery-lightbox-content { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: clamp(.5rem, 3vw, 2rem); min-height: 0; }
-        .gallery-lightbox figure { display: grid; place-items: center; min-width: 0; min-height: 0; margin: 0; }
-        .gallery-lightbox-image { display: block; max-width: min(82vw, 1280px); max-height: min(76dvh, 900px); object-fit: contain; border-radius: 10px; }
-        .gallery-lightbox button { min-width: 44px; min-height: 44px; border: 1px solid rgba(255,255,255,.18); border-radius: 999px; color: inherit; background: rgba(255,255,255,.1); font: inherit; cursor: pointer; }
-        .gallery-lightbox button:hover { background: rgba(255,255,255,.2); }
-        .gallery-lightbox-close { width: 44px; font-size: 1.4rem !important; }
-        .gallery-lightbox-caption { padding: .75rem 0 max(.25rem, env(safe-area-inset-bottom)); text-align: center; color: rgba(255,255,255,.8); font-size: .875rem; }
-        @media (max-width: 600px) {
-            .gallery-lightbox { padding: max(.75rem, env(safe-area-inset-top)) max(.5rem, env(safe-area-inset-right)) max(.5rem, env(safe-area-inset-bottom)) max(.5rem, env(safe-area-inset-left)); }
-            .gallery-lightbox-content { grid-template-columns: 44px minmax(0, 1fr) 44px; gap: .35rem; }
-            .gallery-lightbox-image { max-width: calc(100vw - 7rem); max-height: 74dvh; }
+        .fancybox__nav {
+            --f-button-width: 70px;
+            --f-button-height: 70px;
+            --f-button-svg-width: 32px;
+            --f-button-svg-height: 32px;
+        }
+
+        .fancybox__button--prev,
+        .fancybox__button--next {
+            background: rgba(255, 255, 255, 0.95) !important;
+            border-radius: 50% !important;
+            border: 3px solid rgba(0, 0, 0, 0.1) !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+            width: 70px !important;
+            height: 70px !important;
+            transition: all 0.3s ease !important;
+        }
+
+        .fancybox__button--prev:hover,
+        .fancybox__button--next:hover {
+            background: rgba(255, 255, 255, 1) !important;
+            transform: scale(1.1) !important;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8) !important;
+        }
+
+        .fancybox__button--prev svg,
+        .fancybox__button--next svg {
+            filter: invert(1);
+            width: 32px !important;
+            height: 32px !important;
+        }
+
+        
+        .fancybox__button--close {
+            background: rgba(255, 255, 255, 0.95) !important;
+            border-radius: 50% !important;
+            border: 3px solid rgba(0, 0, 0, 0.1) !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+            width: 60px !important;
+            height: 60px !important;
+            top: 20px !important;
+            right: 20px !important;
+            transition: all 0.3s ease !important;
+        }
+
+        .fancybox__button--close:hover {
+            background: rgba(255, 255, 255, 1) !important;
+            transform: scale(1.1) !important;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8) !important;
+        }
+
+        .fancybox__button--close svg {
+            filter: invert(1);
+            width: 24px !important;
+            height: 24px !important;
+        }
+
+        
+        .fancybox__counter {
+            background: rgba(0, 0, 0, 0.8) !important;
+            padding: 10px 20px !important;
+            border-radius: 25px !important;
+            font-size: 16px !important;
+            font-weight: 600 !important;
+            top: 30px !important;
+            left: 30px !important;
+            right: auto !important;
+        }
+
+        
+        .fancybox__thumbs {
+            background: rgba(0, 0, 0, 0.7) !important;
+            padding: 15px 10px !important;
+        }
+
+        .fancybox__thumb {
+            border-radius: 8px !important;
+            border: 3px solid transparent !important;
+            opacity: 0.6 !important;
+            transition: all 0.3s ease !important;
+            width: 80px !important;
+            height: 80px !important;
+        }
+
+        .fancybox__thumb:hover {
+            opacity: 0.8 !important;
+            border-color: rgba(255, 255, 255, 0.5) !important;
+        }
+
+        .fancybox__thumb.is-nav-selected {
+            opacity: 1 !important;
+            border-color: rgba(255, 255, 255, 0.95) !important;
+            box-shadow: 0 4px 20px rgba(255, 255, 255, 0.3) !important;
+        }
+
+        
+        @media (max-width: 768px) {
+            .fancybox__button--prev,
+            .fancybox__button--next {
+                width: 60px !important;
+                height: 60px !important;
+            }
+
+            .fancybox__button--prev svg,
+            .fancybox__button--next svg {
+                width: 28px !important;
+                height: 28px !important;
+            }
+
+            .fancybox__button--close {
+                width: 50px !important;
+                height: 50px !important;
+                top: 15px !important;
+                right: 15px !important;
+            }
+
+            .fancybox__counter {
+                font-size: 14px !important;
+                padding: 8px 16px !important;
+                top: 20px !important;
+                left: 20px !important;
+            }
+
+            
+            .fancybox__thumb {
+                width: 60px !important;
+                height: 60px !important;
+            }
         }
 
         
@@ -799,13 +913,7 @@
             display: flex;
             align-items: center;
             gap: 0.25rem;
-            min-width: 0;
-            max-width: 100%;
             list-style: none;
-            overflow-x: auto;
-            overscroll-behavior-x: contain;
-            scrollbar-width: thin;
-            -webkit-overflow-scrolling: touch;
         }
 
         .nav-link {
@@ -817,8 +925,6 @@
             font-weight: 500;
             padding: 0.45rem 0.8rem;
             border-radius: 999px;
-            white-space: nowrap;
-            scroll-snap-align: center;
             transition: color var(--transition-fast), background var(--transition-fast);
         }
 
@@ -871,21 +977,12 @@
             }
 
             .nav-inner {
-                justify-content: flex-start;
-                padding-inline: 0.5rem;
-            }
-
-            .nav-links {
-                flex: 1;
-                scroll-snap-type: x proximity;
+                justify-content: center;
             }
 
             .nav-link {
-                display: inline-flex;
-                align-items: center;
-                min-height: 44px;
                 font-size: 0.78125rem;
-                padding: 0.4rem 0.6rem;
+                padding: 0.4rem 0.45rem;
             }
         }
 
@@ -1040,7 +1137,7 @@
 </head>
 <body>
     
-    <a href="#main-content" class="skip-to-content">Skip to main content</a>
+   <!-- <a href="#main-content" class="skip-to-content">Skip to main content</a> -->
 
     
     <nav class="site-nav" id="siteNav" aria-label="Primary navigation" data-analytics-root data-analytics-section="Navigation">
@@ -1050,11 +1147,9 @@
                 <span>Shoaib Akthar</span>
             </a>
             <ul class="nav-links">
-                <li><a class="nav-link" href="#personal-title" data-analytics-id="nav.profile" data-analytics-label="Profile navigation">Profile</a></li>
+                <li><a class="nav-link" href="#personal-title" data-analytics-id="nav.about" data-analytics-label="About navigation">About</a></li>
                 <li><a class="nav-link" href="#professional-title" data-analytics-id="nav.experience" data-analytics-label="Experience navigation">Experience</a></li>
                 <li><a class="nav-link" href="#photos-title" data-analytics-id="nav.photos" data-analytics-label="Photos navigation">Photos</a></li>
-                <li><a class="nav-link" href="#about-title" data-analytics-id="nav.story" data-analytics-label="About me navigation">About me</a></li>
-                <li><a class="nav-link" href="#faith-title" data-analytics-id="nav.values" data-analytics-label="Faith and values navigation">Values</a></li>
                 <li><a class="nav-link" href="#family-title" data-analytics-id="nav.family" data-analytics-label="Family navigation">Family</a></li>
                 <li><a class="nav-link" href="#contact-title" data-analytics-id="nav.contact" data-analytics-label="Contact navigation">Contact</a></li>
             </ul>
@@ -1071,11 +1166,9 @@
     
     <section class="hero" id="top" aria-label="Profile hero section" data-analytics-root data-analytics-section="Profile hero">
         <img 
-            src="my-photo.webp"
+            src="my-photo.jpg" 
             alt="Portrait of Shoaib Akthar" 
             class="hero-image"
-            width="1200"
-            height="1600"
             loading="eager"
             decoding="async"
             fetchpriority="high"
@@ -1096,35 +1189,35 @@
                 <p class="section-subtitle">Essential Information</p>
             </div>
             <div class="info-grid stagger">
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Date of Birth</div>
-                    <div class="info-value"><time datetime="1999-07-17">July 17, 1999</time></div>
+                    <div class="info-value">July 17, 1999</div>
                 </div>
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Age</div>
-                    <div class="info-value"><span id="profileAge" data-birth-date="1999-07-17">27 Years</span></div>
+                    <div class="info-value">26 Years</div>
                 </div>
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Place of Birth</div>
                     <div class="info-value">Chennai, India</div>
                 </div>
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Currently Residing</div>
                     <div class="info-value">Minneapolis, USA</div>
                 </div>
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Height</div>
                     <div class="info-value">5'7"</div>
                 </div>
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Religion</div>
                     <div class="info-value">Islam(Sunni)</div>
                 </div>
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Education</div>
                     <div class="info-value">B.Tech - Computer Science & Engineering<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">SRM Institute of Science and Technology (2021)</span></div>
                 </div>
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Dual Master's Degrees</div>
                     <div class="info-value">M.S. Cyber Security<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">Adelphi University, New York (2023)</span><br>M.S. Security Technologies<br><span style="font-size: 0.9rem; color: var(--apple-medium-gray);">University of Minnesota (2026)</span></div>
                 </div>
@@ -1138,19 +1231,19 @@
                 <p class="section-subtitle">Career & Expertise</p>
             </div>
             <div class="info-grid stagger">
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Current Position</div>
                     <div class="info-value">Cybersecurity Engineer<br><a href="https://www.linkedin.com/in/shoaib-akthar-shajahan/" target="_blank" rel="noopener noreferrer" data-analytics-id="profile.linkedin" data-analytics-label="Professional LinkedIn" style="font-size:0.75rem;color:var(--apple-medium-gray);text-decoration:none;margin-top:0.5rem;display:inline-block">LinkedIn →</a></div>
                 </div>
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Specialization</div>
                     <div class="info-value">Identity & Access Management</div>
                 </div>
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Company</div>
                     <div class="info-value">ObserveID, Inc.</div>
                 </div>
-                <div class="info-card reveal" data-spotlight>
+                <div class="info-card reveal" tabindex="0" data-spotlight>
                     <div class="info-label">Client</div>
                     <div class="info-value">Warner Bros. Discovery</div>
                 </div>
@@ -1164,47 +1257,42 @@
                 <p class="section-subtitle">A Glimpse Into My Life</p>
             </div>
             <div class="photo-gallery stagger">
-                <a href="my-photo.webp" class="photo-item reveal" aria-label="Open photo 1 of 5" data-analytics-id="gallery.photo-1" data-analytics-label="Open photo 1">
+                <a href="my-photo.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 1 of 5" data-analytics-id="gallery.photo-1" data-analytics-label="Open photo 1">
                     <img 
-                        src="my-photo.webp"
+                        src="my-photo.jpg" 
                         alt="Shoaib Akthar - Photo 1 of 5"
-                        width="1200" height="1600"
                         loading="lazy"
                         decoding="async"
                     >
                 </a>
-                <a href="photo2.webp" class="photo-item reveal" aria-label="Open photo 2 of 5" data-analytics-id="gallery.photo-2" data-analytics-label="Open photo 2">
+                <a href="photo2.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 2 of 5" data-analytics-id="gallery.photo-2" data-analytics-label="Open photo 2">
                     <img 
-                        src="photo2.webp"
+                        src="photo2.jpg" 
                         alt="Shoaib Akthar - Photo 2 of 5"
-                        width="1200" height="1600"
                         loading="lazy"
                         decoding="async"
                     >
                 </a>
-                <a href="photo3.webp" class="photo-item reveal" aria-label="Open photo 3 of 5" data-analytics-id="gallery.photo-3" data-analytics-label="Open photo 3">
+                <a href="photo3.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 3 of 5" data-analytics-id="gallery.photo-3" data-analytics-label="Open photo 3">
                     <img 
-                        src="photo3.webp"
+                        src="photo3.jpg" 
                         alt="Shoaib Akthar - Photo 3 of 5"
-                        width="790" height="1428"
                         loading="lazy"
                         decoding="async"
                     >
                 </a>
-                <a href="photo4.webp" class="photo-item reveal" aria-label="Open photo 4 of 5" data-analytics-id="gallery.photo-4" data-analytics-label="Open photo 4">
+                <a href="photo4.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 4 of 5" data-analytics-id="gallery.photo-4" data-analytics-label="Open photo 4">
                     <img 
-                        src="photo4.webp"
+                        src="photo4.jpg" 
                         alt="Shoaib Akthar - Photo 4 of 5"
-                        width="849" height="1600"
                         loading="lazy"
                         decoding="async"
                     >
                 </a>
-                <a href="photo5.webp" class="photo-item reveal" aria-label="Open photo 5 of 5" data-analytics-id="gallery.photo-5" data-analytics-label="Open photo 5">
+                <a href="photo5.jpg" data-fancybox="gallery" class="photo-item reveal" data-caption="Photo 5 of 5" data-analytics-id="gallery.photo-5" data-analytics-label="Open photo 5">
                     <img 
-                        src="photo5.webp"
+                        src="photo5.jpg" 
                         alt="Shoaib Akthar - Photo 5 of 5"
-                        width="900" height="1600"
                         loading="lazy"
                         decoding="async"
                     >
@@ -1242,7 +1330,7 @@
                 <p class="section-subtitle">About My Family</p>
             </div>
             <div class="two-column">
-                <div class="family-card reveal" data-spotlight>
+                <div class="family-card reveal" tabindex="0" data-spotlight>
                     <div class="family-member">
                         <div class="family-label">Father's Name</div>
                         <div class="family-value">K. Shajahan</div>
@@ -1256,7 +1344,7 @@
                         <div class="family-value">S. Parvin Sulthana</div>
                     </div>
                 </div>
-                <div class="family-card reveal" data-spotlight>
+                <div class="family-card reveal" tabindex="0" data-spotlight>
                     <div class="family-member">
                         <div class="family-label">Siblings</div>
                         <div class="family-value">Younger Sister</div>
@@ -1272,7 +1360,7 @@
 
         
         <section class="section" aria-labelledby="contact-title" style="--reveal-delay: 480ms">
-            <div class="contact-card reveal">
+            <div class="contact-card reveal" tabindex="0">
                 <h2 class="contact-title" id="contact-title">Get In Touch</h2>
                 <p class="contact-subtitle">For Further Discussion</p>
                 <div class="contact-info">
@@ -1289,8 +1377,7 @@
     </main>
 
     <footer data-analytics-root data-analytics-section="Footer" style="text-align:center;padding:2rem 1rem;color:var(--apple-medium-gray);font-size:0.875rem;margin-top:4rem">
-        <p>© <span id="copyrightYear">2026</span> Shoaib Akthar. All Rights Reserved.</p>
-        <p class="privacy-note">This site records page views, selected interactions, browser/device details, and rough network-based area in a restricted owner dashboard. It uses a first-party browser ID and does not request precise GPS location.</p>
+        <p>© 2026 Shoaib Akthar. All Rights Reserved.</p>
         <p style="margin-top:1rem;font-size:0.875rem"><a href="https://www.linkedin.com/in/shoaib-akthar-shajahan" target="_blank" rel="noopener noreferrer" data-analytics-id="footer.linkedin" data-analytics-label="Footer LinkedIn" style="color:#B3121F;text-decoration:none;display:inline-block;padding:0.25rem 0.5rem">LinkedIn →</a></p>
     </footer>
 
@@ -1298,18 +1385,6 @@
     <button class="back-to-top" id="backToTop" type="button" aria-label="Back to top" data-analytics-root data-analytics-section="Page controls" data-analytics-id="page.back-to-top" data-analytics-label="Back to top">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
     </button>
-
-    <dialog class="gallery-lightbox" id="galleryLightbox" aria-label="Photo gallery" data-analytics-root data-analytics-section="Photo gallery">
-        <div class="gallery-lightbox-top">
-            <button class="gallery-lightbox-close" id="galleryLightboxClose" type="button" aria-label="Close photo gallery" data-analytics-id="gallery.close" data-analytics-label="Close photo gallery">&times;</button>
-        </div>
-        <div class="gallery-lightbox-content">
-            <button id="galleryLightboxPrevious" type="button" aria-label="Previous photo" data-analytics-id="gallery.previous" data-analytics-label="Previous photo">‹</button>
-            <figure><img class="gallery-lightbox-image" id="galleryLightboxImage" alt=""></figure>
-            <button id="galleryLightboxNext" type="button" aria-label="Next photo" data-analytics-id="gallery.next" data-analytics-label="Next photo">›</button>
-        </div>
-        <p class="gallery-lightbox-caption" id="galleryLightboxCaption" aria-live="polite"></p>
-    </dialog>
 
     
     <script>
@@ -1322,7 +1397,7 @@
         }
 
         
-        const isDesktop = window.innerWidth > 768 && !('ontouchstart' in window) && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const isDesktop = window.innerWidth > 768 && !('ontouchstart' in window);
         
         if (isDesktop) {
             let ticking = false;
@@ -1376,16 +1451,29 @@
         }
 
         
-        const ageElement = document.getElementById('profileAge');
-        if (ageElement) {
-            const [birthYear, birthMonth, birthDay] = ageElement.dataset.birthDate.split('-').map(Number);
-            const now = new Date();
-            let age = now.getFullYear() - birthYear;
-            if (now.getMonth() + 1 < birthMonth || (now.getMonth() + 1 === birthMonth && now.getDate() < birthDay)) age--;
-            ageElement.textContent = `${age} Years`;
+        document.querySelectorAll('.info-card, .family-card, .photo-item').forEach(card => {
+            card.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    card.click();
+                }
+            });
+        });
+
+        
+        if ('PerformanceObserver' in window) {
+            try {
+                const perfObserver = new PerformanceObserver((list) => {
+                    for (const entry of list.getEntries()) {
+                        if (entry.entryType === 'largest-contentful-paint') {
+                        }
+                    }
+                });
+                perfObserver.observe({ entryTypes: ['largest-contentful-paint'] });
+            } catch (e) {
+                
+            }
         }
-        const copyrightYear = document.getElementById('copyrightYear');
-        if (copyrightYear) copyrightYear.textContent = String(new Date().getFullYear());
 
         
         const siteNav = document.getElementById('siteNav');
@@ -1399,10 +1487,10 @@
         let sectionOffsets = [];
         let offsetsDirty = true;
         function refreshOffsets() {
-            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            const y = window.pageYOffset || document.documentElement.scrollTop;
             sectionOffsets = navSectionIds.map(id => {
                 const el = document.getElementById(id);
-                return el ? el.getBoundingClientRect().top + scrollTop : Infinity;
+                return el ? el.offsetTop : Infinity;
             });
             offsetsDirty = false;
         }
@@ -1425,10 +1513,7 @@
                 if (sectionOffsets[i] <= probe) { current = navSectionIds[i]; break; }
             }
             navLinks.forEach(link => {
-                const active = link.getAttribute('href') === '#' + current;
-                link.classList.toggle('is-active', active);
-                if (active) link.setAttribute('aria-current', 'location');
-                else link.removeAttribute('aria-current');
+                link.classList.toggle('is-active', link.getAttribute('href') === '#' + current);
             });
         }
 
@@ -1486,40 +1571,6 @@
             });
         }
 
-        const galleryDialog = document.getElementById('galleryLightbox');
-        const galleryLinks = Array.from(document.querySelectorAll('.photo-item'));
-        if (galleryDialog && typeof galleryDialog.showModal === 'function' && galleryLinks.length) {
-            const image = document.getElementById('galleryLightboxImage');
-            const caption = document.getElementById('galleryLightboxCaption');
-            let index = 0;
-            const showImage = () => {
-                const source = galleryLinks[index].querySelector('img');
-                image.src = galleryLinks[index].href;
-                image.alt = source.alt;
-                caption.textContent = `${source.alt} · ${index + 1} of ${galleryLinks.length}`;
-            };
-            const move = (offset) => {
-                index = (index + offset + galleryLinks.length) % galleryLinks.length;
-                showImage();
-            };
-            galleryLinks.forEach((link, itemIndex) => link.addEventListener('click', (event) => {
-                event.preventDefault();
-                index = itemIndex;
-                showImage();
-                galleryDialog.showModal();
-                document.getElementById('galleryLightboxClose').focus();
-            }));
-            document.getElementById('galleryLightboxClose').addEventListener('click', () => galleryDialog.close());
-            document.getElementById('galleryLightboxPrevious').addEventListener('click', () => move(-1));
-            document.getElementById('galleryLightboxNext').addEventListener('click', () => move(1));
-            galleryDialog.addEventListener('click', (event) => { if (event.target === galleryDialog) galleryDialog.close(); });
-            galleryDialog.addEventListener('keydown', (event) => {
-                if (event.key === 'ArrowLeft') { event.preventDefault(); move(-1); }
-                if (event.key === 'ArrowRight') { event.preventDefault(); move(1); }
-            });
-            galleryDialog.addEventListener('close', () => image.removeAttribute('src'));
-        }
-
         
         
         
@@ -1528,8 +1579,46 @@
         
     </script>
 
+    
+    <script src="https://cdn.jsdelivr.net/npm/@fancyapps/ui@5.0/dist/fancybox/fancybox.umd.js"></script>
     <script>
-    (function recordSiteActivity() {
+        
+        Fancybox.bind('[data-fancybox="gallery"]', {
+            
+            dragToClose: true,
+            
+            
+            showClass: 'f-fadeIn',
+            hideClass: 'f-fadeOut',
+            
+            
+            infinite: true,
+            
+            
+            Toolbar: {
+                display: {
+                    left: [],
+                    middle: [],
+                    right: ['close']
+                }
+            },
+            
+            
+            Thumbs: {
+                type: 'classic',
+                autoStart: true,
+                axis: 'x'
+            },
+            
+            
+            caption: function (fancybox, carousel, slide) {
+                return slide.caption || '';
+            }
+        });
+        
+    </script>
+    <script>
+    (function trackEngagement() {
         var WORKER_URL = 'https://pageview-logger.shoaibtest2.workers.dev';
         if (!WORKER_URL) return;
         var LOG_KEY = 'pv_b94dc26a696d248c905550a485ac8717';
@@ -1651,9 +1740,10 @@
         function resolveClick(e) {
             var path = clickPath(e), elements = [], i;
             for (i = 0; i < path.length; i++) if (clickElement(path[i])) elements.push(path[i]);
-            var owned = false, control = null;
+            var owned = false, widget = false, control = null;
             for (i = 0; i < elements.length; i++) {
                 if (elements[i].hasAttribute && elements[i].hasAttribute('data-analytics-root')) owned = true;
+                if (clickMatches(elements[i], '.fancybox__container')) widget = true;
                 if (!control && elements[i].hasAttribute && elements[i].hasAttribute('data-analytics-id')) control = elements[i];
             }
             if (!control) {
@@ -1661,7 +1751,7 @@
                     if (clickMatches(elements[i], 'a[href],button,summary,[role="button"],[role="link"]')) { control = elements[i]; break; }
                 }
             }
-            var source = owned ? 'site' : 'outside';
+            var source = owned ? 'site' : widget ? 'site-widget' : 'outside';
             var actionId = source !== 'outside' && control && control.getAttribute ? control.getAttribute('data-analytics-id') || '' : '';
             var label = source !== 'outside' && actionId ? cleanClickName(control.getAttribute('data-analytics-label')) : '';
             var quality = label ? 'named' : control && source !== 'outside' ? 'inferred' : 'unknown';
@@ -1680,7 +1770,7 @@
                         section = cleanClickName(heading && heading.textContent) || cleanClickName(node.getAttribute('aria-label')) || cleanClickName(node.id);
                     }
                 }
-                if (!section) section = 'Page';
+                if (!section) section = widget ? 'Photo gallery' : 'Page';
             }
             var pointer = e.detail !== 0;
             return {
