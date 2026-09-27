@@ -1,10 +1,10 @@
-var VERSION = '3.35.0'; // bump when you change the worker code
+var VERSION = '3.36.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
  * =======================================================
  *
- * Purpose: Track page views and engagement on a personal profile site
+ * Purpose: Record page views and selected site activity for a personal profile
  * (shoaibsprojects.github.io/shoaibAktharProBio) with a liquid-glass dashboard.
  *
  * ARCHITECTURE
@@ -70,11 +70,12 @@ var VERSION = '3.35.0'; // bump when you change the worker code
  * ────────────────────────────────────────────────
  *   100k requests/day, 10ms CPU per request
  *   D1: 5GB storage, 5M rows read/day, 100k rows written/day
- *   This project uses ~0.1% of free-tier capacity at current traffic.
+ *   Free-plan caps reject excess requests and D1 operations; account plan is set in Cloudflare.
+ *   Workers Logs includes 200k events/day on the Free plan.
  *
  * @module pageview-logger
  * @author Shoaib Akthar
- * @version 3.35.0
+ * @version 3.36.0
  */
 
 export default {
@@ -182,7 +183,7 @@ function securityHeaders(extra = {}) {
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Cross-Origin-Resource-Policy': 'same-origin',
     'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
-    'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com https://www.openstreetmap.org; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com",
+    'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com",
     ...extra,
   };
 }
@@ -385,7 +386,7 @@ async function handleLogVisit(request, env) {
   const uaParsed = parseUADetailed(ua);
   let { id: visitorId, fromCookie } = await getVisitorId(request, ua, language, cf);
   // Modern browsers (Chrome/Safari) block the cross-site Set-Cookie we issue here, so
-  // the tracker also persists the id it gets from this response in localStorage on the
+  // the page also persists the id it gets from this response in localStorage on the
   // profile origin and echoes it back on every call. Prefer that id when the cookie
   // wasn't delivered, so page views + engagement collapse onto one stable visitor.
   const bodyVid = String(body.visitor_id || '');
@@ -531,7 +532,7 @@ async function handleEvent(request, env) {
 
   // Identity comes from the cookie (validated by regex) — same fence as /log-visit.
   // The cross-site cookie is often blocked (Chrome/Safari), so fall back to the id the
-  // tracker persisted in localStorage and sent in the payload.
+  // page client persisted in localStorage and sent in the payload.
   const cookie = request.headers.get('Cookie') || '';
   const match = cookie.match(new RegExp(VID_COOKIE + '=([^;]+)'));
   let vid = match ? match[1] : '';
@@ -1334,7 +1335,7 @@ function loginPage(msg, env) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Page View Dashboard</title>
+<title>Sign In | Site Activity</title>
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E📊%3C/text%3E%3C/svg%3E">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -1504,8 +1505,7 @@ const DASHBOARD_CLIENT_JS = String.raw`
   function refLinkH(r,n){return r?'<a href="'+escH(r)+'" rel="noreferrer" style="color:var(--accent);text-decoration:none">'+truncH(escH(r),n)+'</a>':'Direct';}
   function agoH(t){if(!t)return'';var diff=Math.floor((Date.now()-new Date(t+'Z').getTime())/1000);if(diff<0)return'just now';if(diff<60)return diff+'s ago';if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';return Math.floor(diff/86400)+'d ago';}
   function devH(v){var d=v.device_type||'Unknown';var o=v.os||'';var b=v.browser||'';var line=[o,b].filter(Boolean).join(' · ');return '<span class="badge">'+escH(d)+'</span>'+(line?' '+escH(line):(v.user_agent?(' '+escH(uaH(v.user_agent))):''));}
-  function clientGeoCoordinate(value,min,max){if(value===null||value===undefined||String(value).trim()==='')return null;var number=Number(value);return Number.isFinite(number)&&number>=min&&number<=max?number:null;}
-  function locH(v){var place=[v.city,v.region,v.country].filter(Boolean).join(', ');var lat=clientGeoCoordinate(v.latitude,-90,90),lon=clientGeoCoordinate(v.longitude,-180,180);if(!place&&lat===null&&lon===null)return '—';place=place||'Approximate area';var map=lat!==null&&lon!==null?'<button type="button" class="area-map-button" data-map-lat="'+lat+'" data-map-lon="'+lon+'" data-map-place="'+escH(place)+'" aria-label="View approximate IP area on map">View map</button>':'<span class="map-unavailable">Coordinates unavailable</span>';return escH(place)+'<div class="location-meta"><span>IP-based estimate</span>'+map+'</div>';}
+  function locH(v){var place=[v.city,v.region,v.country].filter(Boolean).join(', ');if(!place)return v.latitude!==null&&v.latitude!==undefined?'Approximate area<div class="location-meta"><span>IP-based estimate</span><span class="map-unavailable">Place name unavailable</span></div>':'—';var url='https://maps.apple.com/?q='+encodeURIComponent(place);var map='<a class="area-map-link" href="'+escH(url)+'" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" aria-label="Open the approximate area in Apple Maps">Apple Maps ↗</a>';return escH(place)+'<div class="location-meta"><span>IP-based estimate</span>'+map+'</div>';}
   function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
   // ── Search filter state ──
   var _allRecent=[];
@@ -1534,7 +1534,7 @@ const DASHBOARD_CLIENT_JS = String.raw`
     var quality=['named','inferred','unknown'].indexOf(c.label_quality)>=0?c.label_quality:'legacy';
     var raw=c.target||'';
     var name=quality==='legacy'&&/^(div|span|svg)(#|\[|\s)/i.test(raw)?'Unverified page element':raw||'Unidentified click';
-    var qualityName={named:'Named control',inferred:'Inferred control',unknown:'Unidentified',legacy:'Older tracker'}[quality];
+    var qualityName={named:'Named control',inferred:'Inferred control',unknown:'Unidentified',legacy:'Earlier format'}[quality];
     var detail=c.action_id||((quality==='legacy'&&raw!==name)?raw:'')||({site:'Your site','site-widget':'Gallery widget',outside:'Outside site content'}[c.source]||'');
     var tgt='<div class="click-action"><strong>'+escH(truncH(name,64))+'</strong><span class="click-quality click-quality-'+quality+'">'+qualityName+'</span>'+(detail?'<small>'+escH(truncH(detail,80))+'</small>':'')+'</div>';
     var link='—';
@@ -1587,8 +1587,8 @@ const DASHBOARD_CLIENT_JS = String.raw`
           renderRecent();
           _allClicks=ck;
           renderClicks();
-          applyTracked();
-          showTrackedAlert();
+          applyFavorites();
+          showFavoriteAlert();
         }
       })
       .catch(function(){});
@@ -1604,35 +1604,6 @@ const DASHBOARD_CLIENT_JS = String.raw`
   setInterval(refresh,60000);
   var si=document.getElementById('recentSearch');
   if(si)si.addEventListener('input',renderRecent);
-
-  var areaMapDialog=document.getElementById('areaMapDialog');
-  var areaMapFrame=document.getElementById('areaMapFrame');
-  function areaMapEmbedUrl(latitude,longitude){
-    // IP geolocation is city-level at best; show context rather than an exact-looking pin.
-    var centerLat=Math.max(-84.9,Math.min(84.9,latitude));
-    var latSpan=.45,lonSpan=Math.min(1.5,latSpan/Math.max(Math.cos(centerLat*Math.PI/180),.25));
-    var west=Math.max(-180,longitude-lonSpan),east=Math.min(180,longitude+lonSpan);
-    var south=Math.max(-85,centerLat-latSpan),north=Math.min(85,centerLat+latSpan);
-    var params=new URLSearchParams({bbox:[west,south,east,north].join(','),layer:'mapnik'});
-    return 'https://www.openstreetmap.org/export/embed.html?'+params.toString();
-  }
-  if(areaMapDialog){
-    document.addEventListener('click',function(e){
-      var button=e.target.closest('.area-map-button');if(!button)return;
-      e.preventDefault();
-      var latitude=clientGeoCoordinate(button.getAttribute('data-map-lat'),-90,90);
-      var longitude=clientGeoCoordinate(button.getAttribute('data-map-lon'),-180,180);
-      if(latitude===null||longitude===null)return;
-      var place=button.getAttribute('data-map-place')||'Approximate area';
-      document.getElementById('areaMapPlace').textContent=place+' · IP-based estimate';
-      areaMapFrame.title='Map of the approximate IP-based area: '+place;
-      areaMapFrame.src=areaMapEmbedUrl(latitude,longitude);
-      areaMapDialog.showModal();
-    });
-    document.getElementById('areaMapClose').addEventListener('click',function(){areaMapDialog.close();});
-    areaMapDialog.addEventListener('click',function(e){if(e.target===areaMapDialog)areaMapDialog.close();});
-    areaMapDialog.addEventListener('close',function(){areaMapFrame.removeAttribute('src');});
-  }
 
   var identityDialog=document.getElementById('identityDialog');
   var identityState=null;
@@ -1775,7 +1746,7 @@ const DASHBOARD_CLIENT_JS = String.raw`
     var btn=e.target.closest('.reset-eng');
     if(!btn)return;
     e.preventDefault();e.stopPropagation();
-    if(!confirm('Delete ALL click and session tracking data? This cannot be undone.'))return;
+    if(!confirm('Clear all click and session activity? This cannot be undone.'))return;
     btn.disabled=true;btn.textContent='Resetting…';
     fetch('/api/reset-engagement',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'}})
       .then(function(r){return r.json().catch(function(){return{ok:false}});})
@@ -1786,51 +1757,51 @@ const DASHBOARD_CLIENT_JS = String.raw`
       .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='Reset';});
   });
 
-  // ── Visitor tracking (localStorage, no backend) ──
-  var TRACK_KEY='dash-tracked';
-  function getTracked(){try{var v=localStorage.getItem(TRACK_KEY);return v?JSON.parse(v):[];}catch(e){return[];}}
-  function saveTracked(arr){try{localStorage.setItem(TRACK_KEY,JSON.stringify(arr));}catch(e){}}
+  // ── Saved visitor profiles (local browser preference) ──
+  var FAVORITES_KEY='dash-favorites';
+  function getFavorites(){try{var v=localStorage.getItem(FAVORITES_KEY);return v?JSON.parse(v):[];}catch(e){return[];}}
+  function saveFavorites(arr){try{localStorage.setItem(FAVORITES_KEY,JSON.stringify(arr));}catch(e){}}
 
-  // Apply tracked styles to profile cards and recent visit rows
-  function applyTracked(){
-    var t=getTracked();
+  // Highlight saved profiles and their recent visits
+  function applyFavorites(){
+    var favorites=getFavorites();
     // Profile cards
     document.querySelectorAll('.profile-card').forEach(function(c){
       var vid=c.getAttribute('data-vid');
-      var btn=c.querySelector('.track-btn');
-      if(t.indexOf(vid)>=0){c.classList.add('tracked');if(btn)btn.textContent='★ Tracked';}
-      else{if(btn)btn.textContent='☆ Track';}
+      var btn=c.querySelector('.favorite-btn');
+      if(favorites.indexOf(vid)>=0){c.classList.add('is-favorite');if(btn)btn.textContent='★ Saved';}
+      else{if(btn)btn.textContent='☆ Save';}
     });
     // Recent visit rows
     document.querySelectorAll('tr[data-vid]').forEach(function(r){
-      if(t.indexOf(r.getAttribute('data-vid'))>=0)r.classList.add('tracked-visit');
+      if(favorites.indexOf(r.getAttribute('data-vid'))>=0)r.classList.add('favorite-visit');
     });
   }
 
-  // Pin tracked cards to the top of the grid
-  function pinTracked(){
+  // Pin saved profiles to the top of the grid
+  function pinFavorites(){
     var grid=document.getElementById('profileGrid');
     if(!grid)return;
-    var t=getTracked();
+    var favorites=getFavorites();
     var cards=Array.from(grid.querySelectorAll('.profile-card'));
     cards.sort(function(a,b){
-      var aT=t.indexOf(a.getAttribute('data-vid'))>=0?0:1;
-      var bT=t.indexOf(b.getAttribute('data-vid'))>=0?0:1;
-      return aT-bT;
+      var aSaved=favorites.indexOf(a.getAttribute('data-vid'))>=0?0:1;
+      var bSaved=favorites.indexOf(b.getAttribute('data-vid'))>=0?0:1;
+      return aSaved-bSaved;
     });
     cards.forEach(function(c){grid.appendChild(c);});
   }
 
-  // Golden alert banner when a tracked visitor has been active in the last 24h
-  function showTrackedAlert(){
-    var el=document.getElementById('trackedAlert');
+  // Highlight when a saved profile has appeared in the last day
+  function showFavoriteAlert(){
+    var el=document.getElementById('favoriteAlert');
     if(!el)return;
-    var t=getTracked();
-    if(!t.length){el.hidden=true;return;}
+    var favorites=getFavorites();
+    if(!favorites.length){el.hidden=true;return;}
     var now=Date.now(),WIN=24*3600000,best=null;
     document.querySelectorAll('.profile-card[data-vid][data-lastseen]').forEach(function(c){
       var vid=c.getAttribute('data-vid');
-      if(t.indexOf(vid)<0)return;
+      if(favorites.indexOf(vid)<0)return;
       var ls=new Date(c.getAttribute('data-lastseen')+'Z').getTime();
       if(isNaN(ls))return;
       var age=now-ls;
@@ -1846,25 +1817,25 @@ const DASHBOARD_CLIENT_JS = String.raw`
     }else{el.hidden=true;}
   }
 
-  // Click handler for track buttons
+  // Save or remove a profile from the favorites list
   document.addEventListener('click',function(e){
-    var btn=e.target.closest('.track-btn');
+    var btn=e.target.closest('.favorite-btn');
     if(!btn)return;
     var vid=btn.getAttribute('data-vid');
     if(!vid)return;
-    var t=getTracked();
-    var idx=t.indexOf(vid);
-    if(idx>=0){t.splice(idx,1);btn.textContent='☆ Track';}else{t.push(vid);btn.textContent='★ Tracked';}
-    saveTracked(t);
-    applyTracked();
-    pinTracked();
-    showTrackedAlert();
+    var favorites=getFavorites();
+    var idx=favorites.indexOf(vid);
+    if(idx>=0){favorites.splice(idx,1);btn.textContent='☆ Save';}else{favorites.push(vid);btn.textContent='★ Saved';}
+    saveFavorites(favorites);
+    applyFavorites();
+    pinFavorites();
+    showFavoriteAlert();
   });
 
-  // On load: apply tracking, pin tracked cards to top, show any recent-visit alert
-  applyTracked();
-  pinTracked();
-  showTrackedAlert();
+  // Apply saved-profile preferences and the recent-activity alert
+  applyFavorites();
+  pinFavorites();
+  showFavoriteAlert();
 
 `;
 
@@ -1889,10 +1860,10 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   var eng = engagement || {};
   var topClicks = eng.topClicks || [];
   var engagementHtml = '<div class="stats" style="margin-bottom:1.5rem">'
-    + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="statSessions">' + (eng.sessions || 0) + '</div><div class="stat-label">Sessions Tracked</div></div>'
+    + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="statSessions">' + (eng.sessions || 0) + '</div><div class="stat-label">Sessions</div></div>'
     + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></div><div class="stat-value" id="statAvg">' + fmtDur(eng.avgDurationSec || 0) + '</div><div class="stat-label">Avg. Time on Page</div></div>'
     + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">' + (eng.totalClicks || 0) + '</div><div class="stat-label">Total Clicks</div></div>'
-    + '<div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Most clicked</div><div id="topClickList" style="font-size:0.8rem;color:var(--muted);line-height:1.5">' + (topClicks.slice(0, 3).map(function(c){ var name=!c.label_quality&&/^(div|span|svg)(#|\[|\s)/i.test(c.target)?'Unverified element':c.target;return esc(name) + ' <strong>' + c.count + '</strong>'; }).join(' &middot; ') || '—') + '</div><button class="reset-eng" type="button" title="Delete all click &amp; session tracking data">Reset</button></div>'
+    + '<div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Most clicked</div><div id="topClickList" style="font-size:0.8rem;color:var(--muted);line-height:1.5">' + (topClicks.slice(0, 3).map(function(c){ var name=!c.label_quality&&/^(div|span|svg)(#|\[|\s)/i.test(c.target)?'Unverified element':c.target;return esc(name) + ' <strong>' + c.count + '</strong>'; }).join(' &middot; ') || '—') + '</div><button class="reset-eng" type="button" title="Clear click and session activity">Reset</button></div>'
     + '</div>';
 
   // Server-known data seeded inline (slim) so the client can skip the on-load /stats re-fetch
@@ -1934,10 +1905,10 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Page View Dashboard</title>
+<title>Site Activity | Shoaib Akthar</title>
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E📊%3C/text%3E%3C/svg%3E">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src https://www.openstreetmap.org">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self';">
 <style>
   *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
   :root{--bg:#eef0f6;--text:#1d1d1f;--muted:#6e6e73;--dim:#1d1d1f;
@@ -2099,27 +2070,27 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   html[data-theme="dark"] .prob-review{color:#ffd18a}
   html[data-theme="dark"] .profile-card{background:linear-gradient(150deg,rgba(50,58,78,0.5),rgba(28,31,38,0.35))}
   html[data-theme="dark"] .profile-merge{background:rgba(255,255,255,0.06)}
-  .track-btn{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
-  .track-btn:hover{border-color:#f59e0b;color:#b45309;background:rgba(245,158,11,0.1)}
+  .favorite-btn{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
+  .favorite-btn:hover{border-color:#f59e0b;color:#b45309;background:rgba(245,158,11,0.1)}
   .reset-eng{align-self:flex-start;margin-top:0.5rem;font-size:0.66rem;padding:3px 10px;border-radius:8px;border:1px solid rgba(211,47,47,0.4);background:rgba(211,47,47,0.06);cursor:pointer;font-weight:600;letter-spacing:0.03em;color:#c62828;transition:all 0.15s}
   .reset-eng:hover{background:rgba(211,47,47,0.12);border-color:#c62828}
   html[data-theme="dark"] .reset-eng{color:#ef9a9a;border-color:rgba(239,154,154,0.4);background:rgba(211,47,47,0.15)}
   html[data-theme="dark"] .reset-eng:hover{background:rgba(211,47,47,0.25)}
-  .profile-card.tracked{border:2px solid #f59e0b;box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 0 24px rgba(245,158,11,0.15),0 8px 32px rgba(0,0,0,0.08)}
-  .profile-card.tracked .track-btn{background:rgba(245,158,11,0.15);color:#b45309;border-color:#f59e0b}
-  html[data-theme="dark"] .profile-card.tracked{border-color:#fbbf24;box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 0 24px rgba(251,191,36,0.18)}
-  html[data-theme="dark"] .profile-card.tracked .track-btn{background:rgba(251,191,36,0.2);color:#fde68a;border-color:#fbbf24}
-  .tracked-alert{display:flex;align-items:center;gap:0.6rem;margin:0 0 1rem;padding:0.75rem 1rem;border-radius:var(--radius-sm);
+  .profile-card.is-favorite{border:2px solid #f59e0b;box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 0 24px rgba(245,158,11,0.15),0 8px 32px rgba(0,0,0,0.08)}
+  .profile-card.is-favorite .favorite-btn{background:rgba(245,158,11,0.15);color:#b45309;border-color:#f59e0b}
+  html[data-theme="dark"] .profile-card.is-favorite{border-color:#fbbf24;box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 0 24px rgba(251,191,36,0.18)}
+  html[data-theme="dark"] .profile-card.is-favorite .favorite-btn{background:rgba(251,191,36,0.2);color:#fde68a;border-color:#fbbf24}
+  .favorite-alert{display:flex;align-items:center;gap:0.6rem;margin:0 0 1rem;padding:0.75rem 1rem;border-radius:var(--radius-sm);
     background:linear-gradient(150deg,rgba(245,158,11,0.16),rgba(251,191,36,0.08));border:1px solid rgba(245,158,11,0.5);
     box-shadow:0 0 24px rgba(245,158,11,0.18),inset 0 1px 0 rgba(255,255,255,0.4);
     backdrop-filter:blur(30px) saturate(200%);-webkit-backdrop-filter:blur(30px) saturate(200%);
     font-size:0.85rem;font-weight:600;color:#92400e;animation:pulse-new 3s ease-in-out infinite}
-  html[data-theme="dark"] .tracked-alert{color:#fde68a;background:linear-gradient(150deg,rgba(251,191,36,0.18),rgba(251,191,36,0.06))}
-  .tracked-alert[hidden]{display:none}
-  tr.tracked-visit td{background:rgba(245,158,11,0.06)}
-  html[data-theme="dark"] tr.tracked-visit td{background:rgba(251,191,36,0.08)}
-  .tracked-section h2::after{content:' ⚡ Tracked';font-size:0.7rem;color:#f59e0b;font-weight:600;vertical-align:middle}
-  html[data-theme="dark"] .tracked-section h2::after{color:#fbbf24}
+  html[data-theme="dark"] .favorite-alert{color:#fde68a;background:linear-gradient(150deg,rgba(251,191,36,0.18),rgba(251,191,36,0.06))}
+  .favorite-alert[hidden]{display:none}
+  tr.favorite-visit td{background:rgba(245,158,11,0.06)}
+  html[data-theme="dark"] tr.favorite-visit td{background:rgba(251,191,36,0.08)}
+  .favorite-section h2::after{content:' ★ Saved';font-size:0.7rem;color:#f59e0b;font-weight:600;vertical-align:middle}
+  html[data-theme="dark"] .favorite-section h2::after{color:#fbbf24}
   html[data-theme="dark"] .prob-high{background:rgba(76,175,80,0.2);color:#81c784}
   html[data-theme="dark"] .prob-med{background:rgba(255,152,0,0.2);color:#ffb74d}
   html[data-theme="dark"] .prob-low{background:rgba(158,158,158,0.2);color:#bdbdbd}
@@ -2166,16 +2137,10 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .identity-history li{font-size:0.73rem;color:var(--muted);line-height:1.45}
   .identity-dialog{width:min(92vw,530px);max-height:85vh;overflow:auto;margin:auto;padding:1.4rem;border:1px solid var(--border);border-radius:22px;background:var(--bg);color:var(--text);box-shadow:0 30px 90px rgba(0,0,0,.35);font-family:inherit}
   .identity-dialog::backdrop{background:rgba(10,15,30,.65);backdrop-filter:blur(4px)}
-  .area-map-dialog{width:min(94vw,920px);max-height:94vh}
-  .map-dialog-header{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:.9rem}
-  .map-dialog-header h2{margin-bottom:.25rem}
-  .map-close{flex:none;border:1px solid var(--border-soft);border-radius:10px;padding:.55rem .85rem;background:var(--glass-bg);color:var(--text);font:inherit;font-size:.78rem;font-weight:700;cursor:pointer}
-  .area-map-frame{display:block;width:100%;height:min(62vh,560px);min-height:280px;border:1px solid var(--border-soft);border-radius:16px;background:var(--bg)}
-  html[data-theme="dark"] .area-map-frame{filter:invert(.9) hue-rotate(180deg) saturate(.72) brightness(.88) contrast(.92)}
   .location-meta{display:flex;align-items:center;gap:.45rem;margin-top:.25rem;color:var(--muted);font-size:.68rem;white-space:normal}
-  .area-map-button{border:1px solid var(--border-soft);border-radius:999px;padding:.18rem .55rem;background:var(--accent-soft);color:var(--accent);font:inherit;font-size:.67rem;font-weight:700;cursor:pointer;white-space:nowrap}
-  .area-map-button:hover{border-color:var(--accent);background:var(--accent-soft)}
-  .area-map-button:focus-visible,.map-close:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  .area-map-link{border:1px solid var(--border-soft);border-radius:999px;padding:.18rem .55rem;background:var(--accent-soft);color:var(--accent);font:inherit;font-size:.67rem;font-weight:700;text-decoration:none;white-space:nowrap}
+  .area-map-link:hover{border-color:var(--accent);background:var(--accent-soft)}
+  .area-map-link:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
   .map-unavailable{font-size:.66rem;color:var(--muted)}
   .identity-dialog h2{font-size:1.2rem;margin-bottom:0.5rem}
   .identity-dialog p{font-size:0.8rem;line-height:1.55;color:var(--muted)}
@@ -2209,18 +2174,18 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .visit-editor{margin-top:1rem;padding:1rem;border:1px solid var(--accent);border-radius:14px;background:var(--accent-soft)}
   .visit-editor[hidden]{display:none}
   .visit-editor .identity-dialog-actions{margin-top:.75rem}
-  @media(max-width:600px){body{padding:1rem}.top-bar{top:0.5rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}.identity-review{grid-template-columns:1fr}.area-map-dialog{padding:1rem}.area-map-frame{height:56vh;min-height:240px}}
+  @media(max-width:600px){body{padding:1rem}.top-bar{top:0.5rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}.identity-review{grid-template-columns:1fr}}
   @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
 <div class="aurora-layer" aria-hidden="true"></div>
 <div class="container">
-  <div class="tracked-alert" id="trackedAlert" hidden></div>
+  <div class="favorite-alert" id="favoriteAlert" hidden></div>
   <div class="top-bar">
     <div>
-      <h1>Page View Dashboard</h1>
-      <p class="subtitle">Real-time visit tracking for your profile page</p>
+      <h1>Site Activity</h1>
+      <p class="subtitle">A private view of visits and page interactions.</p>
     </div>
     <div class="top-actions">
       <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" type="button">Dark</button>
@@ -2238,9 +2203,9 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   <div class="card" style="margin-bottom:1.5rem">
     <div class="card-head">
       <h2>Click Details</h2>
-      <span style="font-size:0.72rem;color:var(--muted)">Last 60 clicks &middot; tracked visitors glow gold</span>
+      <span style="font-size:0.72rem;color:var(--muted)">Latest 60 interactions &middot; saved profiles are highlighted</span>
     </div>
-    <p class="click-explainer">Named controls are identified by the site. Inferred controls use browser semantics. Unidentified and older clicks are not guesses; positions are viewport coordinates, not proof of a button.</p>
+    <p class="click-explainer">Named controls are identified by the site. Inferred controls use browser semantics. Unidentified and earlier interactions are not guesses; positions are viewport coordinates, not proof of a button.</p>
     <div class="table-scroll-x">
       <table>
         <thead><tr><th>Time (CST)</th><th>Visitor</th><th>Location</th><th>Section</th><th>Interaction</th><th>Destination</th><th>Viewport position</th></tr></thead>
@@ -2249,7 +2214,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     </div>
   </div>
 
-  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem" id="identityStudio"><div class="identity-intro"><div><div class="identity-kicker">Identity studio</div><h2>Visitor Profiles</h2><p>Review the visits inside a profile to correct an old mix-up. Combine profiles only when they belong to the same person; linked IDs can be unlinked later.</p></div></div><div class="profile-grid tracked-section" id="profileGrid">' + profiles.map(function(p,i){
+  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem" id="identityStudio"><div class="identity-intro"><div><div class="identity-kicker">Identity studio</div><h2>Visitor Profiles</h2><p>Review the visits inside a profile to correct an old mix-up. Combine profiles only when they belong to the same person; linked IDs can be unlinked later.</p></div></div><div class="profile-grid favorite-section" id="profileGrid">' + profiles.map(function(p,i){
     var os = (p.oss && p.oss[0]) || '';
     var browser = (p.browsers && p.browsers[0]) || '';
     var rawUA = (p.uas && p.uas[0]) || '';
@@ -2284,7 +2249,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     var citiesStr = p.cities.slice(0,3).join(', ') + (p.cities.length>3 ? ' +'+(p.cities.length-3) : '');
     var times = p.timezones && p.timezones.filter(Boolean).join(', ') || '';
     var members = p.members.length > 1 ? '<div class="identity-members"><span class="identity-note">Linked IDs</span>' + p.members.map(function(id){return '<span class="identity-chip" title="'+esc(id)+'">'+esc(id.slice(0,10))+(id!==p.id?' <button type="button" class="profile-separate" data-member="'+esc(id)+'" data-canonical="'+esc(p.id)+'" aria-label="Unlink '+esc(id)+'">Unlink</button>':'')+'</span>';}).join('') + '</div>' : '';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div>'+members+'<div class="profile-actions"><button class="track-btn" data-vid="'+esc(p.id)+'" title="Star this visitor to track them">★ Track</button><button class="profile-review" data-vid="'+esc(p.id)+'" title="Inspect and correct individual visits">Review visits</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Keep this card and add another profile to it">Combine with another…</button></div></div>';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div>'+members+'<div class="profile-actions"><button class="favorite-btn" data-vid="'+esc(p.id)+'" title="Save profile for quick review">☆ Save</button><button class="profile-review" data-vid="'+esc(p.id)+'" title="Inspect and correct individual visits">Review visits</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Keep this card and add another profile to it">Combine with another…</button></div></div>';
   }).join('') + '</div><div class="identity-history"><h3>Identity activity</h3>' + (identityEvents.length ? '<ul>' + identityEvents.map(function(ev){var summary=ev.action==='merge'?'Combined '+ev.affected.length+' ID'+(ev.affected.length===1?'':'s'):ev.action==='separate'?'Unlinked an ID':ev.action==='move'?'Moved visit #'+ev.viewId:'Restored visit #'+ev.viewId;return '<li>'+formatTime(ev.createdAt)+' · '+summary+(ev.target?' → '+esc(ev.target.slice(0,10)):'')+'</li>';}).join('')+'</ul>' : '<p class="identity-note">No identity changes yet.</p>') + '</div></div>' : ''}
 
   <dialog class="identity-dialog" id="identityDialog" aria-labelledby="identityDialogTitle">
@@ -2311,13 +2276,6 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     </div>
     <p class="identity-error" id="visitError" role="alert" hidden></p>
     <div class="identity-dialog-actions"><button type="button" id="visitClose">Close</button></div>
-  </dialog>
-
-  <dialog class="identity-dialog area-map-dialog" id="areaMapDialog" aria-labelledby="areaMapTitle">
-    <div class="map-dialog-header"><div><h2 id="areaMapTitle">Approximate visitor area</h2><p id="areaMapPlace">IP-based estimate</p></div><button type="button" class="map-close" id="areaMapClose">Close</button></div>
-    <div class="identity-signal">This view is centered on an IP-based estimate. It may indicate a nearby city or network gateway—not the person’s exact device location.</div>
-    <iframe id="areaMapFrame" class="area-map-frame" title="Map of the approximate IP-based area" loading="lazy" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin"></iframe>
-    <p class="identity-note" style="margin-top:.65rem">Map by OpenStreetMap contributors. No exact-location marker is shown. Loaded only when you open an area map.</p>
   </dialog>
 
   <div class="grid-2">
@@ -2391,10 +2349,11 @@ function coordH(v) {
   const longitude = geoCoordinate(v.longitude, -180, 180);
   if (!place && latitude === null && longitude === null) return '';
   place = place || 'Approximate area';
-  const map = latitude !== null && longitude !== null
-    ? '<button type="button" class="area-map-button" data-map-lat="' + latitude + '" data-map-lon="' + longitude
-      + '" data-map-place="' + esc(place) + '" aria-label="View approximate IP area on map">View map</button>'
-    : '<span class="map-unavailable">Coordinates unavailable</span>';
+  const hasPlace = [v.city, v.region, v.country].some(Boolean);
+  const map = hasPlace
+    ? '<a class="area-map-link" href="https://maps.apple.com/?q=' + encodeURIComponent(place)
+      + '" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" aria-label="Open the approximate area in Apple Maps">Apple Maps ↗</a>'
+    : '<span class="map-unavailable">Place name unavailable</span>';
   return '<div class="location-meta"><span>IP-based estimate</span>' + map + '</div>';
 }
 
