@@ -8,6 +8,22 @@ import worker from './index.js';
 const A = 'fp-aaaaaaaaaaaa';
 const B = 'fp-bbbbbbbbbbbb';
 const C = 'fp-cccccccccccc';
+const workerSource = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+const areaMapSource = workerSource.match(/function areaMapEmbedUrl\(latitude,longitude\)\{[\s\S]*?\n  \}/)?.[0];
+
+test('area map uses a broad valid bbox without an exact-location pin', () => {
+  assert.ok(areaMapSource);
+  const areaMapEmbedUrl = new Function(areaMapSource + '; return areaMapEmbedUrl;')();
+  const url = new URL(areaMapEmbedUrl(89.9, 179.9));
+  const [west, south, east, north] = url.searchParams.get('bbox').split(',').map(Number);
+  assert.equal(url.origin, 'https://www.openstreetmap.org');
+  assert.equal(url.pathname, '/export/embed.html');
+  assert.equal(url.searchParams.has('marker'), false);
+  assert.ok([west, south, east, north].every(Number.isFinite));
+  assert.ok(west < east && south < north);
+  assert.ok(south >= -85 && north <= 85);
+  assert.equal(east, 180);
+});
 
 function d1(sqlite) {
   return {
@@ -71,6 +87,8 @@ test('manual links preserve raw visits and can be separated', async () => {
   sqlite.exec(readFileSync(new URL('../migrations/0003_click_semantics.sql', import.meta.url), 'utf8'));
   const insert = sqlite.prepare("INSERT INTO page_views (visitor_id, city, region, country, device_type, os, browser) VALUES (?, 'Austin', 'Texas', 'US', 'Mobile', 'iOS', 'Safari')");
   insert.run(A); insert.run(A); insert.run(B); insert.run(C);
+  sqlite.prepare('UPDATE page_views SET latitude = 0, longitude = 0').run();
+  sqlite.prepare('UPDATE page_views SET latitude = 100, longitude = 200 WHERE id = 4').run();
   sqlite.prepare("UPDATE page_views SET user_agent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Version/26.2 Mobile/15E148 Safari/604.1 Brave', os = 'macOS', browser = 'Safari' WHERE id = 1").run();
   sqlite.prepare("UPDATE page_views SET city = 'Bengaluru', country = 'IN', user_agent = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/153.0.0.0 Mobile Safari/537.36', os = 'Android', browser = 'Chrome' WHERE id = 2").run();
   sqlite.prepare("INSERT INTO page_engagement (visitor_id, session_id, event_type, target) VALUES (?, 's1', 'click', 'CTA')").run(A);
@@ -130,6 +148,13 @@ test('manual links preserve raw visits and can be separated', async () => {
   assert.match(html, /I know these profiles belong to the same person/);
   assert.match(html, /source:addProfile,target:keepProfile/);
   assert.match(html, /IP-based estimate/);
+  assert.match(html, /data-map-lat="0" data-map-lon="0"/);
+  assert.match(html, /Coordinates unavailable/);
+  assert.match(html, /Approximate visitor area/);
+  assert.match(html, /No exact-location marker is shown/);
+  assert.match(html, /openstreetmap\.org\/export\/embed\.html/);
+  assert.match(html, /frame-src https:\/\/www\.openstreetmap\.org/);
+  assert.doesNotMatch(html, /google\.com\/maps/);
   assert.doesNotMatch(html, /30\.\d{5}, -97\.\d{5}/);
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
   for (const script of scripts) new Function(script[1]);

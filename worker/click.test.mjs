@@ -153,12 +153,16 @@ test('Worker validates new click fields and keeps legacy events readable', async
     CREATE TABLE page_engagement (id INTEGER PRIMARY KEY, visitor_id TEXT, session_id TEXT, event_type TEXT, page_url TEXT,
       x INTEGER, y INTEGER, target TEXT, extra TEXT, section TEXT, cls TEXT, href TEXT);`);
   sqlite.exec(readFileSync(new URL('../migrations/0003_click_semantics.sql', import.meta.url), 'utf8'));
-  const env = { DB: d1(sqlite), LOG_KEY: 'test-key', ALLOWED_ORIGINS: 'https://example.test' };
-  async function send(payload) {
+  const edgeKeys = [];
+  const env = {
+    DB: d1(sqlite), LOG_KEY: 'test-key', ALLOWED_ORIGINS: 'https://example.test',
+    EVENT_INGEST_LIMITER: { async limit({ key }) { edgeKeys.push(key); return { success: true }; } },
+  };
+  async function send(payload, requestEnv = env) {
     return worker.fetch(new Request('https://worker.test/event', { method: 'POST',
-      headers: { Origin: 'https://example.test', 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0 Safari/605.1.15' },
+      headers: { Origin: 'https://example.test', 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0 Safari/605.1.15', 'CF-Connecting-IP': '203.0.113.8' },
       body: JSON.stringify({ key: 'test-key', visitor_id: 'fp-aaaaaaaaaaaa', session_id: 'sid', event_type: 'click', ...payload }),
-    }), env, {});
+    }), requestEnv, {});
   }
   const named = await send({ pageUrl: 'https://example.test/page?secret=1', target: 'Contact navigation', section: 'Navigation',
     action_id: 'nav.contact', label_quality: 'named', source: 'site', interaction: 'pointer', x: 1203, y: 78,
@@ -183,5 +187,20 @@ test('Worker validates new click fields and keeps legacy events readable', async
   const legacy = await send({ target: 'div#tav-host', section: 'page' });
   assert.equal(legacy.status, 200);
   assert.equal(sqlite.prepare('SELECT label_quality FROM page_engagement WHERE id = 3').get().label_quality, null);
+
+  assert.equal(edgeKeys.length, 3);
+  assert.ok(edgeKeys.every(key => key === '203.0.113.8'));
+  const rateRowsBefore = sqlite.prepare('SELECT COUNT(*) AS n FROM rate_limits').get().n;
+  const eventsBefore = sqlite.prepare('SELECT COUNT(*) AS n FROM page_engagement').get().n;
+  const edgeRejected = await send({ event_type: 'heartbeat' }, {
+    ...env, EVENT_INGEST_LIMITER: { async limit() { return { success: false }; } },
+  });
+  assert.equal(edgeRejected.status, 429);
+  const missingLimiter = await send({ event_type: 'heartbeat' }, {
+    DB: env.DB, LOG_KEY: env.LOG_KEY, ALLOWED_ORIGINS: env.ALLOWED_ORIGINS,
+  });
+  assert.equal(missingLimiter.status, 503);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM rate_limits').get().n, rateRowsBefore);
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM page_engagement').get().n, eventsBefore);
   sqlite.close();
 });
