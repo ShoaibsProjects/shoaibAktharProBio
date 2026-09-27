@@ -1,4 +1,4 @@
-var VERSION = '3.33.0'; // bump when you change the worker code
+var VERSION = '3.34.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -73,7 +73,7 @@ var VERSION = '3.33.0'; // bump when you change the worker code
  *
  * @module pageview-logger
  * @author Shoaib Akthar
- * @version 3.33.0
+ * @version 3.34.0
  */
 
 export default {
@@ -443,6 +443,34 @@ async function handleLogVisit(request, env) {
   return response;
 }
 
+function eventText(value, max) {
+  return typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) : '';
+}
+
+function eventInteger(value, min, max) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isInteger(number) && number >= min && number <= max ? number : null;
+}
+
+function eventPageUrl(value, origin) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && url.origin === origin
+      ? (url.origin + url.pathname).slice(0, 300) : null;
+  } catch (_) { return null; }
+}
+
+function eventDestination(value, origin, named) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    const hash = /^#[a-zA-Z0-9_-]{1,64}$/.test(url.hash) ? url.hash : '';
+    return (url.origin === origin ? url.origin + url.pathname + hash
+      : named ? url.origin + url.pathname : url.origin).slice(0, 200);
+  } catch (_) { return null; }
+}
+
 // ── POST /event (heartbeat, click, visibility, beforeunload) ──
 async function handleEvent(request, env) {
   const base = securityHeaders({ 'Vary': 'Origin' });
@@ -506,23 +534,33 @@ async function handleEvent(request, env) {
   }
 
   if (event_type === 'click') {
-    const x = Number.isFinite(Number(body.x)) ? Math.round(Number(body.x)) : null;
-    const y = Number.isFinite(Number(body.y)) ? Math.round(Number(body.y)) : null;
-    const target = typeof body.target === 'string' ? body.target.slice(0, 200) : null;
-    const extra = typeof body.extra === 'string' ? body.extra.slice(0, 200) : null;
-    const section = typeof body.section === 'string' ? body.section.slice(0, 80) : null;
-    const cls = typeof body.cls === 'string' ? body.cls.slice(0, 80) : null;
-    const href = typeof body.href === 'string' ? body.href.slice(0, 200) : null;
+    const source = ['site', 'site-widget', 'outside'].includes(body.source) ? body.source : null;
+    const rawActionId = eventText(body.action_id, 64);
+    const actionId = source !== 'outside' && /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/.test(rawActionId) ? rawActionId : null;
+    let labelQuality = source && ['named', 'inferred', 'unknown'].includes(body.label_quality) ? body.label_quality : null;
+    if (labelQuality === 'named' && !actionId) labelQuality = 'inferred';
+    if (source === 'outside') labelQuality = 'unknown';
+    const viewportW = eventInteger(body.viewport_w, 1, 16384);
+    const viewportH = eventInteger(body.viewport_h, 1, 16384);
+    const interaction = ['pointer', 'non-pointer'].includes(body.interaction) ? body.interaction : null;
+    const x = interaction === 'non-pointer' ? null : eventInteger(body.x, 0, 16384);
+    const y = interaction === 'non-pointer' ? null : eventInteger(body.y, 0, 16384);
+    const target = source === 'outside' ? 'Unidentified element outside site content'
+      : labelQuality === 'unknown' ? 'Page area (not a control)' : eventText(body.target, 100) || null;
+    const extra = eventText(body.extra, 200) || null;
+    const section = source === 'outside' ? 'Outside site content' : eventText(body.section, 80) || null;
+    const cls = source ? null : eventText(body.cls, 80) || null;
+    const href = source === 'outside' ? null : eventDestination(body.href, origin, labelQuality === 'named');
     await env.DB.prepare(
-      `INSERT INTO page_engagement (visitor_id, session_id, event_type, page_url, x, y, target, extra, section, cls, href)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(vid, session_id || null, event_type, body.pageUrl || null, x, y, target, extra, section, cls, href).run();
+      `INSERT INTO page_engagement (visitor_id, session_id, event_type, page_url, x, y, target, extra, section, cls, href, action_id, label_quality, source, interaction, viewport_w, viewport_h)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(vid, session_id || null, event_type, eventPageUrl(body.pageUrl, origin), x, y, target, extra, section, cls, href, actionId, labelQuality, source, interaction, viewportW, viewportH).run();
   } else {
     // heartbeat / pagehide / pageshow / focus — no x/y
     await env.DB.prepare(
       `INSERT INTO page_engagement (visitor_id, session_id, event_type, page_url)
        VALUES (?, ?, ?, ?)`
-    ).bind(vid, session_id || null, event_type, body.pageUrl || null).run();
+    ).bind(vid, session_id || null, event_type, eventPageUrl(body.pageUrl, origin)).run();
   }
 
   return Response.json({ ok: true }, { headers: base });
@@ -1093,10 +1131,11 @@ async function queryEngagement(db) {
   const totalSessions = perSession.length;
   const totalSec = perSession.reduce((a, b) => a + b.durationSec, 0);
   const avgSec = totalSessions ? Math.round(totalSec / totalSessions) : 0;
+  const totalClicks = await db.prepare("SELECT COUNT(*) AS count FROM page_engagement WHERE event_type = 'click'").first();
 
   // Top clicked targets
   const { results: clicks } = await db.prepare(
-    `SELECT target, COUNT(*) AS count
+    `SELECT target, MAX(label_quality) AS label_quality, COUNT(*) AS count
      FROM page_engagement
      WHERE event_type = 'click' AND target IS NOT NULL AND target != ''
      GROUP BY target
@@ -1107,6 +1146,7 @@ async function queryEngagement(db) {
   // Per-click log — newest first, with the visitor's latest known location
   const { results: clickDetails } = await db.prepare(
     `SELECT pe.created_at, pe.visitor_id, COALESCE(il.canonical_id, pe.visitor_id) AS profile_id, pe.target, pe.section, pe.cls, pe.href, pe.x, pe.y,
+            pe.action_id, pe.label_quality, pe.source, pe.interaction, pe.viewport_w, pe.viewport_h,
             (SELECT v.city    FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS city,
             (SELECT v.region  FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS region,
             (SELECT v.country FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS country
@@ -1120,6 +1160,7 @@ async function queryEngagement(db) {
   return {
     sessions: totalSessions,
     avgDurationSec: avgSec,
+    totalClicks: totalClicks?.count || 0,
     recent: perSession.slice(0, 10),
     topClicks: clicks || [],
     clickDetails: clickDetails || [],
@@ -1485,10 +1526,16 @@ const DASHBOARD_CLIENT_JS = String.raw`
   function clickRowHtml(c){
     var vid=c.profile_id||c.visitor_id||'';
     var sec=c.section?escH(truncH(c.section,28)):'—';
-    var tgt=c.target?escH(truncH(c.target,40)):'—';
+    var quality=['named','inferred','unknown'].indexOf(c.label_quality)>=0?c.label_quality:'legacy';
+    var raw=c.target||'';
+    var name=quality==='legacy'&&/^(div|span|svg)(#|\[|\s)/i.test(raw)?'Unverified page element':raw||'Unidentified click';
+    var qualityName={named:'Named control',inferred:'Inferred control',unknown:'Unidentified',legacy:'Older tracker'}[quality];
+    var detail=c.action_id||((quality==='legacy'&&raw!==name)?raw:'')||({site:'Your site','site-widget':'Gallery widget',outside:'Outside site content'}[c.source]||'');
+    var tgt='<div class="click-action"><strong>'+escH(truncH(name,64))+'</strong><span class="click-quality click-quality-'+quality+'">'+qualityName+'</span>'+(detail?'<small>'+escH(truncH(detail,80))+'</small>':'')+'</div>';
     var link='—';
-    if(c.href)link='<a href="'+escH(c.href)+'" target="_blank" rel="noreferrer" style="color:var(--accent);text-decoration:none;font-size:0.72rem">'+truncH(escH(String(c.href).replace(/^https?:\/\//,'')),24)+'</a>';
-    var pos=(c.x!=null&&c.y!=null)?c.x+','+c.y:'—';
+    if(c.href&&/^https?:\/\//i.test(c.href))link='<a href="'+escH(c.href)+'" target="_blank" rel="noopener noreferrer" class="click-destination">'+escH(truncH(String(c.href).replace(/^https?:\/\//,''),34))+'</a>';
+    var pos=c.interaction==='non-pointer'?'Non-pointer':(c.x!=null&&c.y!=null)?c.x+','+c.y:'—';
+    if(c.viewport_w&&c.viewport_h)pos+='<small>'+c.viewport_w+' × '+c.viewport_h+' viewport</small>';
     return '<tr data-vid="'+escH(vid)+'"><td><div>'+fmtH(c.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(c.created_at)+'</div></td><td><span class="badge" title="Original ID: '+escH(c.visitor_id||'')+'">'+escH(vid.slice(0,8))+'</span></td><td>'+locH(c)+'</td><td style="font-size:0.78rem">'+sec+'</td><td style="font-size:0.78rem">'+tgt+'</td><td>'+link+'</td><td style="font-size:0.72rem;color:var(--muted)">'+pos+'</td></tr>';
   }
   function renderClicks(){
@@ -1504,6 +1551,9 @@ const DASHBOARD_CLIENT_JS = String.raw`
         if(!d)return;
         var g=function(id,v){var el=document.getElementById(id);if(el)el.textContent=v;};
         g('statToday',d.totals.today);g('stat24h',d.totals.last24h);g('statTotal',d.totals.total);g('statUnique',d.totals.unique);
+        g('statClicks',(d.engagement&&d.engagement.totalClicks)||0);
+        var top=(d.engagement&&d.engagement.topClicks)||[],topList=document.getElementById('topClickList');
+        if(topList)topList.innerHTML=top.length?top.slice(0,3).map(function(c){var name=!c.label_quality&&/^(div|span|svg)(#|\[|\s)/i.test(c.target)?'Unverified element':c.target;return escH(name)+' <strong>'+c.count+'</strong>';}).join(' &middot; '):'—';
         if(_sd&&d.identityEvents&&((d.identityEvents[0]&&d.identityEvents[0].id)||'')!==_sd.identityRevision){location.reload();return;}
         var rec=d.recent||[],ck=(d.engagement&&d.engagement.clickDetails)||[];
         var refs=d.referrers||[],cc=d.topCountries||[];
@@ -1807,8 +1857,8 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   var engagementHtml = '<div class="stats" style="margin-bottom:1.5rem">'
     + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="statSessions">' + (eng.sessions || 0) + '</div><div class="stat-label">Sessions Tracked</div></div>'
     + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></div><div class="stat-value" id="statAvg">' + fmtDur(eng.avgDurationSec || 0) + '</div><div class="stat-label">Avg. Time on Page</div></div>'
-    + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">' + topClicks.length + '</div><div class="stat-label">Most-Clicked</div></div>'
-    + '<div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Recent clicks</div><div style="font-size:0.8rem;color:var(--muted);line-height:1.5">' + (topClicks.slice(0, 3).map(function(c){ return esc(c.target) + ' <strong>' + c.count + '</strong>'; }).join(' &middot; ') || '—') + '</div><button class="reset-eng" type="button" title="Delete all click &amp; session tracking data">Reset</button></div>'
+    + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">' + (eng.totalClicks || 0) + '</div><div class="stat-label">Total Clicks</div></div>'
+    + '<div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Most clicked</div><div id="topClickList" style="font-size:0.8rem;color:var(--muted);line-height:1.5">' + (topClicks.slice(0, 3).map(function(c){ var name=!c.label_quality&&/^(div|span|svg)(#|\[|\s)/i.test(c.target)?'Unverified element':c.target;return esc(name) + ' <strong>' + c.count + '</strong>'; }).join(' &middot; ') || '—') + '</div><button class="reset-eng" type="button" title="Delete all click &amp; session tracking data">Reset</button></div>'
     + '</div>';
 
   // Server-known data seeded inline (slim) so the client can skip the on-load /stats re-fetch
@@ -2040,6 +2090,17 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   html[data-theme="dark"] .prob-med{background:rgba(255,152,0,0.2);color:#ffb74d}
   html[data-theme="dark"] .prob-low{background:rgba(158,158,158,0.2);color:#bdbdbd}
   .table-scroll-x{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius)}
+  .click-action{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;max-width:300px;white-space:normal;line-height:1.35}
+  .click-action strong{font-size:.79rem;font-weight:750;color:var(--text)}
+  .click-action small{flex-basis:100%;font-size:.68rem;color:var(--muted);font-family:ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}
+  .click-quality{display:inline-flex;align-items:center;border:1px solid var(--border-soft);border-radius:999px;padding:.13rem .42rem;font-size:.62rem;font-weight:750;white-space:nowrap;background:var(--accent-soft);color:var(--accent)}
+  .click-quality-inferred{background:rgba(245,158,11,.1);color:#9a5900;border-color:rgba(245,158,11,.25)}
+  .click-quality-unknown,.click-quality-legacy{background:rgba(120,125,135,.12);color:var(--muted)}
+  html[data-theme="dark"] .click-quality-inferred{color:#ffd18a}
+  .click-destination{font-size:.72rem;color:var(--accent);text-decoration:none;overflow-wrap:anywhere;white-space:normal}
+  .click-destination:hover{text-decoration:underline}
+  #clickTbody td:last-child small{display:block;font-size:.66rem;color:var(--muted);margin-top:.15rem}
+  .click-explainer{font-size:.74rem;line-height:1.5;color:var(--muted);margin:.25rem 0 1rem}
   .table-scroll-y{max-height:520px;width:100%;overflow-y:auto;-webkit-overflow-scrolling:touch}
   .table-scroll-y table{box-shadow:none;border-radius:0}
   .table-scroll-y thead th{position:sticky;top:0;z-index:1}
@@ -2134,9 +2195,10 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
       <h2>Click Details</h2>
       <span style="font-size:0.72rem;color:var(--muted)">Last 60 clicks &middot; tracked visitors glow gold</span>
     </div>
+    <p class="click-explainer">Named controls are identified by the site. Inferred controls use browser semantics. Unidentified and older clicks are not guesses; positions are viewport coordinates, not proof of a button.</p>
     <div class="table-scroll-x">
       <table>
-        <thead><tr><th>Time (CST)</th><th>Visitor</th><th>Location</th><th>Section</th><th>Target</th><th>Link</th><th>Pos</th></tr></thead>
+        <thead><tr><th>Time (CST)</th><th>Visitor</th><th>Location</th><th>Section</th><th>Interaction</th><th>Destination</th><th>Viewport position</th></tr></thead>
         <tbody id="clickTbody"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody>
       </table>
     </div>
