@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   exp INTEGER NOT NULL
 );
 
--- Engagement tracking: heartbeats, clicks, pagehide events per session.
+-- Site activity: heartbeats, clicks, and page visibility events per session.
 CREATE TABLE IF NOT EXISTS page_engagement (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT DEFAULT (datetime('now')),

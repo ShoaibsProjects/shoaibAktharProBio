@@ -11,10 +11,10 @@ if (!crypto.subtle.timingSafeEqual) {
 }
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const start = html.indexOf('(function trackEngagement() {');
+const start = html.indexOf('(function recordSiteActivity() {');
 const end = html.indexOf('})();', start) + 5;
 assert.ok(start > 0 && end > start);
-const tracker = html.slice(start, end);
+const activityScript = html.slice(start, end);
 
 test('authored control IDs are unique', () => {
   const ids = [...html.matchAll(/data-analytics-id="([^"]+)"/g)].map(match => match[1]);
@@ -30,7 +30,6 @@ function element(tag, attrs = {}, parent = null) {
     getAttribute(name) { return attrs[name] ?? null; },
     querySelector(selector) { return selector === '.section-title' && attrs.heading ? { textContent: attrs.heading } : null; },
     matches(selector) {
-      if (selector === '.fancybox__container') return (attrs.class || '').split(' ').includes('fancybox__container');
       if (selector === 'section') return tag === 'section';
       const link = tag === 'a' && !!attrs.href;
       const role = attrs.role;
@@ -41,7 +40,7 @@ function element(tag, attrs = {}, parent = null) {
   };
 }
 
-function trackerHarness(firstVisit = false) {
+function activityHarness(firstVisit = false) {
   const calls = [];
   let onClick;
   const body = element('body');
@@ -51,7 +50,7 @@ function trackerHarness(firstVisit = false) {
   const tab = firstVisit ? {} : { _pv_logged: '1', _pv_sid: 'sid' };
   const sessionStorage = { getItem(key) { return tab[key] || null; }, setItem(key, value) { tab[key] = value; } };
   const localStorage = { getItem() { return firstVisit ? null : 'fp-aaaaaaaaaaaa'; }, setItem() {} };
-  runInNewContext(tracker, {
+  runInNewContext(activityScript, {
     document, location, window, sessionStorage, localStorage, URL,
     setInterval() {},
     fetch(url, options) {
@@ -70,10 +69,10 @@ function trackerHarness(firstVisit = false) {
 }
 
 test('nested site controls keep their authored names and strip URL queries', () => {
-  const h = trackerHarness();
+  const h = activityHarness();
   const main = element('main', { 'data-analytics-root': '' }, h.body);
   const section = element('section', { heading: 'Photo gallery' }, main);
-  const link = element('a', { href: '/photo2.jpg?token=private', 'data-analytics-id': 'gallery.photo-2', 'data-analytics-label': 'Open photo 2' }, section);
+  const link = element('a', { href: '/photo2.webp?token=private', 'data-analytics-id': 'gallery.photo-2', 'data-analytics-label': 'Open photo 2' }, section);
   const img = element('img', {}, link);
   const event = h.click([img, link, section, main, h.body]);
   assert.equal(event.target, 'Open photo 2');
@@ -81,13 +80,13 @@ test('nested site controls keep their authored names and strip URL queries', () 
   assert.equal(event.label_quality, 'named');
   assert.equal(event.section, 'Photo gallery');
   assert.equal(event.source, 'site');
-  assert.equal(event.href, 'https://example.test/photo2.jpg');
+  assert.equal(event.href, 'https://example.test/photo2.webp');
   assert.equal(event.pageUrl, 'https://example.test/page');
   assert.equal(event.viewport_w, 1440);
 });
 
 test('outside elements are unidentified rather than guessed, and both quick clicks count', () => {
-  const h = trackerHarness();
+  const h = activityHarness();
   const host = element('div', { id: 'tav-host', text: 'Private overlay text' }, h.body);
   const first = h.click([host, h.body]);
   h.click([host, h.body]);
@@ -101,7 +100,7 @@ test('outside elements are unidentified rather than guessed, and both quick clic
 });
 
 test('a quick first-visit tap waits for the visitor ID instead of being lost', async () => {
-  const h = trackerHarness(true);
+  const h = activityHarness(true);
   const nav = element('nav', { 'data-analytics-root': '', 'data-analytics-section': 'Navigation' }, h.body);
   const link = element('a', { href: '#top', 'data-analytics-id': 'nav.home', 'data-analytics-label': 'Home navigation' }, nav);
   h.click([link, nav, h.body]);
@@ -114,15 +113,16 @@ test('a quick first-visit tap waits for the visitor ID instead of being lost', a
   assert.equal(clicks[0].body.target, 'Home navigation');
 });
 
-test('gallery controls use accessible labels without copying arbitrary text', () => {
-  const h = trackerHarness();
-  const gallery = element('div', { class: 'fancybox__container' }, h.body);
-  const button = element('button', { 'aria-label': 'Next photo' }, gallery);
+test('gallery controls use authored labels without copying arbitrary text', () => {
+  const h = activityHarness();
+  const gallery = element('dialog', { 'data-analytics-root': '', 'data-analytics-section': 'Photo gallery' }, h.body);
+  const button = element('button', { 'data-analytics-id': 'gallery.next', 'data-analytics-label': 'Next photo' }, gallery);
   const icon = element('svg', {}, button);
   const event = h.click([icon, button, gallery, h.body], { detail: 0 });
   assert.equal(event.target, 'Next photo');
-  assert.equal(event.source, 'site-widget');
-  assert.equal(event.label_quality, 'inferred');
+  assert.equal(event.source, 'site');
+  assert.equal(event.action_id, 'gallery.next');
+  assert.equal(event.label_quality, 'named');
   assert.equal(event.interaction, 'non-pointer');
   assert.equal(event.x, null);
   const main = element('main', { 'data-analytics-root': '' }, h.body);

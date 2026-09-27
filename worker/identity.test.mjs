@@ -9,20 +9,21 @@ const A = 'fp-aaaaaaaaaaaa';
 const B = 'fp-bbbbbbbbbbbb';
 const C = 'fp-cccccccccccc';
 const workerSource = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
-const areaMapSource = workerSource.match(/function areaMapEmbedUrl\(latitude,longitude\)\{[\s\S]*?\n  \}/)?.[0];
+const locationHtmlSource = workerSource.match(/function coordH\(v\) \{[\s\S]*?\n\}/)?.[0];
 
-test('area map uses a broad valid bbox without an exact-location pin', () => {
-  assert.ok(areaMapSource);
-  const areaMapEmbedUrl = new Function(areaMapSource + '; return areaMapEmbedUrl;')();
-  const url = new URL(areaMapEmbedUrl(89.9, 179.9));
-  const [west, south, east, north] = url.searchParams.get('bbox').split(',').map(Number);
-  assert.equal(url.origin, 'https://www.openstreetmap.org');
-  assert.equal(url.pathname, '/export/embed.html');
-  assert.equal(url.searchParams.has('marker'), false);
-  assert.ok([west, south, east, north].every(Number.isFinite));
-  assert.ok(west < east && south < north);
-  assert.ok(south >= -85 && north <= 85);
-  assert.equal(east, 180);
+test('Apple Maps links search by place name without implying exact coordinates', () => {
+  assert.ok(locationHtmlSource);
+  const renderLocation = new Function('geoCoordinate', 'esc', locationHtmlSource + '; return coordH;')(
+    (value, min, max) => { const number = Number(value); return Number.isFinite(number) && number >= min && number <= max ? number : null; },
+    value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  );
+  const namedPlace = renderLocation({ city: 'Seattle', region: 'Washington', country: 'US', latitude: 47.6, longitude: -122.3 });
+  assert.match(namedPlace, /maps\.apple\.com\/\?q=Seattle%2C%20Washington%2C%20US/);
+  assert.match(namedPlace, /target="_blank" rel="noopener noreferrer"/);
+  assert.doesNotMatch(namedPlace, /47\.6|-122\.3|\?ll=/);
+  const unnamedPlace = renderLocation({ city: '', region: '', country: '', latitude: 0, longitude: 0 });
+  assert.match(unnamedPlace, /Place name unavailable/);
+  assert.doesNotMatch(unnamedPlace, /maps\.apple\.com/);
 });
 
 function d1(sqlite) {
@@ -148,12 +149,9 @@ test('manual links preserve raw visits and can be separated', async () => {
   assert.match(html, /I know these profiles belong to the same person/);
   assert.match(html, /source:addProfile,target:keepProfile/);
   assert.match(html, /IP-based estimate/);
-  assert.match(html, /data-map-lat="0" data-map-lon="0"/);
-  assert.match(html, /Coordinates unavailable/);
-  assert.match(html, /Approximate visitor area/);
-  assert.match(html, /No exact-location marker is shown/);
-  assert.match(html, /openstreetmap\.org\/export\/embed\.html/);
-  assert.match(html, /frame-src https:\/\/www\.openstreetmap\.org/);
+  assert.match(html, /maps\.apple\.com/);
+  assert.match(html, /Place name unavailable/);
+  assert.doesNotMatch(html, /<iframe|area-map-frame/i);
   assert.doesNotMatch(html, /google\.com\/maps/);
   assert.doesNotMatch(html, /30\.\d{5}, -97\.\d{5}/);
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
