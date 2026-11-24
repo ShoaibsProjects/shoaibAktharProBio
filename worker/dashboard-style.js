@@ -127,7 +127,7 @@ export const dashboardStyles = `
   .plot-card .periods button:is(:hover,[aria-pressed=true]) { color:var(--plot); background:var(--lime); border-color:var(--lime) }
   .plot-summary { display:flex; gap:.65rem; align-items:baseline; flex-wrap:wrap }
   .plot-total { color:var(--lime); font:normal 2.75rem/1 var(--display); font-variant-numeric:lining-nums tabular-nums }
-  .plot-summary span:last-child,.plot-detail,.plot-dates { color:var(--plot-muted); font-size:.79rem }
+  .plot-summary span:last-child,.plot-comparison,.plot-dates { color:var(--plot-muted); font-size:.79rem }
   .plot-chart { position:relative; display:grid; grid-template-columns:2.25rem minmax(0,1fr); grid-template-rows:clamp(110px,14vw,175px) auto; column-gap:.55rem; margin-top:1rem }
   .plot-axis { display:flex; flex-direction:column; justify-content:space-between; text-align:right; color:var(--plot-muted); font: .69rem/1 var(--mono) }
   .plot-bars {
@@ -141,7 +141,22 @@ export const dashboardStyles = `
   .chart-bar[data-active] span,.chart-bar:hover span,.chart-bar:focus-visible span { background:var(--lime) }
   .chart-bar:focus-visible { outline-offset:0 }
   .plot-dates { grid-column:2; display:flex; justify-content:space-between; margin-top:.5rem; font-family:var(--mono) }
-  .plot-detail { min-height:1.4rem; margin-top:.65rem }
+  .plot-comparison { min-height:1.2rem; margin-top:.35rem }
+  .plot-tooltip {
+    position:absolute; z-index:1; top:.25rem; left:clamp(5.5rem,var(--tip-position,50%),calc(100% - 5.5rem));
+    width:11rem; transform:translateX(-50%); padding:.55rem .7rem; pointer-events:none;
+    display:grid; gap:.15rem; border:1px solid #739381; border-radius:9px; background:#101e18;
+    color:var(--plot-ink); box-shadow:0 8px 22px #0719117a; font-size:.8rem; line-height:1.35
+  }
+  .plot-tooltip span { color:var(--lime); font-weight:650 }
+  .plot-tooltip small,.plot-inspector small { color:var(--plot-muted); font-size:.77rem }
+  .plot-inspector {
+    display:flex; gap:.55rem; justify-content:space-between; align-items:center;
+    margin-top:.75rem; padding-top:.6rem; border-top:1px solid #627c6b; font-size:.85rem;
+  }
+  .plot-inspector small,.plot-inspector strong { display:block }
+  .plot-inspector .button { flex:none; color:var(--plot-ink); border-color:#759181; background:#294438 }
+  .plot-inspector .button:hover { border-color:var(--lime); color:var(--lime) }
   .rank-list { list-style:none; padding:0; display:grid; gap:.8rem }
   .rank-list li { display:grid; grid-template-columns:2ch minmax(0,1fr) auto; gap:.15rem .65rem; align-items:baseline; font-size:.91rem }
   .rank-number,.rank-count { color:var(--muted); font: .76rem/1.3 var(--mono) }
@@ -151,9 +166,18 @@ export const dashboardStyles = `
   .overview-country { align-self:start }
   .compact-visits { list-style:none; padding:0 }
   .compact-visits li { display:flex; align-items:center; justify-content:space-between; gap:.8rem; padding:.65rem 0; border-top:1px solid var(--line); overflow-wrap:anywhere }
-  .compact-visits li > div { min-width:0 }
+  .compact-visits .visit-open {
+    width:100%; text-align:left; justify-content:space-between; gap:.65rem; border:0; padding:.35rem;
+    background:none; font-size:inherit; border-radius:6px;
+  }
+  .compact-visits .visit-open:hover { background:var(--wash) }
+  .compact-visits .visit-open > span { min-width:0 }
+  .compact-visits .visit-open strong { display:block }
+  .date-filter label { display:block; font-size:.84rem; font-weight:650; margin-bottom:.2rem }
+  .date-filter > div { display:flex; flex-wrap:wrap; gap:.5rem }
+  .date-filter input { min-height:44px; width:10.5rem; padding:.4rem .55rem; color:var(--text); background:var(--surface); border:1px solid var(--line); border-radius:8px }
   .compact-visits small { display:block }
-  .compact-visits time { white-space:nowrap; font-size:.8rem; color:var(--muted) }
+  .compact-visits time { white-space:nowrap; font-size:.8rem; color:var(--muted); text-align:right }
   .favorite-alert { padding:.4rem .75rem; margin-bottom:1rem; border:1px solid var(--line); border-radius:10px; background:var(--wash); display:flex; align-items:center; gap:.5rem }
   .favorite-alert button { margin-left:auto; flex:none }
   .search-wrap input { width:100%; min-height:44px; padding:.5rem .75rem; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:9px }
@@ -223,6 +247,19 @@ export const dashboardStyles = `
   .identity-warning { background:var(--warning-bg); color:var(--warning) }
   .identity-dialog .identity-error { color:var(--danger) }
   .identity-dialog-actions { display:flex; justify-content:end; flex-wrap:wrap; gap:.45rem; margin-top:1rem }
+  .record-dialog { width:min(94vw,43rem) }
+  .record-dialog .card-head { align-items:start }
+  .record-dialog .eyebrow { color:var(--accent); font-size:.73rem; margin:0 0 .2rem }
+  .record-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.6rem }
+  .record-fields > div { background:var(--wash); border-radius:8px; padding:.6rem; overflow-wrap:anywhere }
+  .record-fields dt { color:var(--muted); font-size:.75rem; font-weight:650 }
+  .record-fields dd { font-size:.9rem }
+  .record-activity { border-top:1px solid var(--line); margin-top:1rem; padding-top:.85rem }
+  .record-timeline { padding:0; list-style:none }
+  .record-timeline li { padding:.5rem 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere }
+  .record-timeline time { display:block; font: .75rem/1.5 var(--mono); color:var(--muted) }
+  .record-timeline small { display:block }
+  .record-timeline .empty-state { border:0 }
   .visit-list { display:grid; gap:.4rem; max-height:38vh; overflow:auto; margin-top:.7rem; padding:.2rem }
   .visit-item { display:flex; align-items:center; justify-content:space-between; gap:.6rem }
   .visit-item small { display:block }
@@ -251,10 +288,11 @@ export const dashboardStyles = `
     .log-table td { display:block; border:0; padding:0; width:auto }
     .log-table td[data-label]::before { content:attr(data-label); display:block; color:var(--muted); font-size:.72rem; font-weight:650; margin-bottom:.15rem }
     .log-table td.time-cell { grid-column:1 / -1; grid-row:1; font-weight:650 }
-    .log-table td.main-cell,.log-table td.empty-state { grid-column:1 / -1 }
+    .log-table td.main-cell,.log-table td.empty-state,.log-table td.visit-detail-cell { grid-column:1 / -1 }
     .log-table td.main-cell { grid-row:2 }
-    .log-table td.sel-col,.log-table td.act-col { grid-row:5; text-align:left }
+    .log-table td.sel-col,.log-table td.act-col { grid-row:6; text-align:left }
     .log-table td.act-col { text-align:right }
+    .log-table td.visit-detail-cell { grid-row:5 }
     #clickTbody td:is(.sel-col,.act-col) { grid-row:6 }
     .log-table tr.favorite-visit { border-left:3px solid var(--accent); padding-left:.55rem }
   }
@@ -271,6 +309,7 @@ export const dashboardStyles = `
     .overview-grid,.profile-grid { grid-template-columns:minmax(0,1fr); gap:.75rem }
     .card-head:has(.search-wrap) { align-items:stretch; flex-direction:column }
     .table-card { padding:.9rem }
+    .compact-visits time { white-space:normal }
   }
   @media(max-width:370px) {
     .shell { width:calc(100% - 1.25rem) }

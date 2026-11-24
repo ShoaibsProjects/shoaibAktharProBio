@@ -1,7 +1,8 @@
 import { DASHBOARD_CLIENT_JS } from './dashboard-client.js';
 import { dashboardStyles, themeScript } from './dashboard-style.js';
+import { centralCalendar, centralDate, centralDayRange, DASHBOARD_TIME_ZONE } from './dashboard-calendar.js';
 
-var VERSION = '3.38.0'; // bump when you change the worker code
+var VERSION = '3.39.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -57,6 +58,8 @@ var VERSION = '3.38.0'; // bump when you change the worker code
  *   /meta              GET   — Worker metadata (session auth)
  *   /api/merge-visitors POST — Link two visitor profiles (session+CSRF auth)
  *   /api/unmerge-visitor POST — Separate one original visitor ID
+ *   /api/visits        GET   — Visit log for a Central calendar date
+ *   /api/visit-activity GET  — One visit and its related click records
  *   /api/profile-visits GET — Review a profile's underlying visits
  *   /api/move-visit POST — Move one historical visit into another profile
  *   /api/restore-visit POST — Undo a per-visit correction
@@ -80,7 +83,7 @@ var VERSION = '3.38.0'; // bump when you change the worker code
  *
  * @module pageview-logger
  * @author Shoaib Akthar
- * @version 3.38.0
+ * @version 3.39.0
  */
 
 export default {
@@ -108,6 +111,8 @@ export default {
         response = await handleMergeVisitors(request, env);
       } else if (path === '/api/unmerge-visitor') {
         response = await handleUnmergeVisitor(request, env);
+      } else if (path === '/api/visits' || path === '/api/visit-activity') {
+        response = await handleVisitActivity(request, env, path);
       } else if (path === '/api/profile-visits') {
         response = await handleProfileVisits(request, env);
       } else if (path === '/api/move-visit') {
@@ -906,52 +911,38 @@ async function handleDelete(request, env) {
       const ids = dedupeIds(body.ids).map(n => parseInt(n, 10)).filter(n => Number.isInteger(n) && n > 0).slice(0, 100);
       if (!ids.length) return Response.json({ error: 'bad_ids' }, { status: 400, headers: h });
       const ph = ids.map(() => '?').join(',');
-      const { results: rows } = await db.prepare(
-        `SELECT id, visitor_id, created_at FROM page_views WHERE id IN (${ph})`
-      ).bind(...ids).all();
-      if (!rows || !rows.length) {
-        return Response.json({ ok: true, scope, deleted: { page_views: 0, engagement: 0 } }, { headers: h });
-      }
-
-      // Engagement has no FK to page_views, so attribute each click/heartbeat to the
-      // visit it followed: [this visit, next visit) per raw visitor ID. Deleting
-      // consecutive visits tiles the windows, removing exactly their engagement.
-      const originalIds = [...new Set(rows.map(r => r.visitor_id))];
-      const oph = originalIds.map(() => '?').join(',');
-      const { results: allVisits } = await db.prepare(
-        `SELECT visitor_id, created_at FROM page_views WHERE visitor_id IN (${oph}) ORDER BY visitor_id ASC, created_at ASC`
-      ).bind(...originalIds).all();
-      const timesByVisitor = {};
-      for (const v of (allVisits || [])) (timesByVisitor[v.visitor_id] = timesByVisitor[v.visitor_id] || []).push(v.created_at);
-      const windows = [];
-      for (const r of rows) {
-        const arr = timesByVisitor[r.visitor_id] || [];
-        let next = null;
-        for (const t of arr) { if (t > r.created_at) { next = t; break; } }
-        windows.push({ vid: r.visitor_id, start: r.created_at, end: next || '9999-12-31 23:59:59' });
-      }
-
-      const stmts = [
+      // Only clear a time window when every visit sharing that visitor and second is selected.
+      // Resolve the windows inside the batch so a concurrent visit can't change the decision.
+      const results = await db.batch([
         db.prepare(`DELETE FROM visitor_visit_overrides WHERE page_view_id IN (${ph})`).bind(...ids),
         db.prepare(`DELETE FROM visitor_visit_events WHERE page_view_id IN (${ph})`).bind(...ids),
-      ];
-      for (let i = 0; i < windows.length; i += 30) {
-        const chunk = windows.slice(i, i + 30);
-        const clause = chunk.map(() => '(visitor_id = ? AND created_at >= ? AND created_at < ?)').join(' OR ');
-        const params = [];
-        chunk.forEach(w => params.push(w.vid, w.start, w.end));
-        stmts.push(db.prepare(`DELETE FROM page_engagement WHERE ${clause}`).bind(...params));
-      }
-      stmts.push(db.prepare(`DELETE FROM page_views WHERE id IN (${ph})`).bind(...ids));
-
-      const results = await db.batch(stmts);
-      const last = results.length - 1;
-      const engagement = results.slice(2, last).reduce((a, r) => a + chg(r), 0);
+        db.prepare(
+          `WITH selected AS (
+             SELECT id, visitor_id, created_at FROM page_views WHERE id IN (${ph})
+           ), windows AS (
+             SELECT DISTINCT s.visitor_id, s.created_at AS start,
+                    (SELECT MIN(n.created_at) FROM page_views n
+                     WHERE n.visitor_id = s.visitor_id AND n.created_at > s.created_at) AS end
+             FROM selected s
+             WHERE NOT EXISTS (
+               SELECT 1 FROM page_views sibling
+               WHERE sibling.visitor_id = s.visitor_id AND sibling.created_at = s.created_at
+                 AND sibling.id NOT IN (SELECT id FROM selected)
+             )
+           )
+           DELETE FROM page_engagement WHERE id IN (
+             SELECT e.id FROM windows w JOIN page_engagement e
+             ON e.visitor_id = w.visitor_id AND e.created_at >= w.start
+               AND (w.end IS NULL OR e.created_at < w.end)
+           )`
+        ).bind(...ids),
+        db.prepare(`DELETE FROM page_views WHERE id IN (${ph})`).bind(...ids),
+      ]);
       const deleted = {
         visit_overrides: chg(results[0]),
         visit_events: chg(results[1]),
-        engagement,
-        page_views: chg(results[last]),
+        engagement: chg(results[2]),
+        page_views: chg(results[3]),
       };
       console.log(JSON.stringify({ event: 'data_deleted', scope, deleted }));
       return Response.json({ ok: true, scope, deleted }, { headers: h });
@@ -964,7 +955,7 @@ async function handleDelete(request, env) {
   }
 }
 
-function chg(r) { return (r && r.changes) || 0; }
+function chg(r) { return r?.meta?.changes ?? r?.changes ?? 0; }
 
 function dedupeIds(arr) {
   return [...new Set((Array.isArray(arr) ? arr : []).map(String).filter(Boolean))];
@@ -1183,26 +1174,60 @@ async function verifyTurnstile(env, token) {
 }
 
 async function renderDashboard(db) {
-  const [totals, topCountries, recentVisits, trend, referrers, engagement, profiles, identityEvents] = await Promise.all([
+  return dashboardHtml(await queryDashboard(db));
+}
+
+async function queryDashboard(db) {
+  const days = centralCalendar(new Date(), 60);
+  const [totals, topCountries, recent, trend, referrers, engagement, profiles, identityEvents] = await Promise.all([
     queryStats(db),
     queryTopCountries(db),
-    queryRecent(db),
-    queryTrend(db, 30),
+    queryVisits(db),
+    queryTrend(db, days),
     queryTopReferrers(db),
     queryEngagement(db),
     queryVisitorProfiles(db),
     queryIdentityEvents(db),
   ]);
-  return dashboardHtml(totals, topCountries, recentVisits, trend, referrers, engagement, profiles, identityEvents);
+  // Use the same day's count for the headline and chart, even if a visit arrives mid-refresh.
+  return { totals: { ...totals, today: trend.at(-1)?.count || 0 }, topCountries, recent, trend, referrers, engagement, profiles, identityEvents };
 }
 
-// ── GET /stats (JSON) ──
-async function handleStats(request, env) {
-  const jsonHeaders = securityHeaders({
+function dashboardJsonHeaders() {
+  return securityHeaders({
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store',
     'X-Robots-Tag': 'noindex, nofollow',
   });
+}
+
+async function handleVisitActivity(request, env, path) {
+  const headers = dashboardJsonHeaders();
+  function json(value, status = 200) { return Response.json(value, { status, headers }); }
+  if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+  const session = sessionTokenFrom(request.headers.get('Cookie') || '');
+  if (!session || !(await verifySessionToken(session, env))) return json({ error: 'unauthorized' }, 401);
+
+  const params = new URL(request.url).searchParams;
+  if (path === '/api/visits') {
+    const date = params.get('date') || '';
+    const range = centralDayRange(date);
+    if (!range || date > centralDate(new Date())) return json({ error: 'bad_date' }, 400);
+    const visits = await queryVisits(env.DB, 'WHERE v.created_at >= ? AND v.created_at < ?', [range.start, range.end], 101);
+    return json({ date, visits: visits.slice(0, 100), hasMore: visits.length > 100 });
+  }
+
+  const id = Number(params.get('id'));
+  if (!Number.isSafeInteger(id) || id <= 0) return json({ error: 'bad_visit_id' }, 400);
+  const [visit] = await queryVisits(env.DB, 'WHERE v.id = ?', [id], 1);
+  if (!visit) return json({ error: 'visit_not_found' }, 404);
+  const activity = await queryVisitClicks(env.DB, visit);
+  return json({ visit, ...activity });
+}
+
+// ── GET /stats (JSON) ──
+async function handleStats(request, env) {
+  const jsonHeaders = dashboardJsonHeaders();
 
   if (request.method !== 'GET') {
     return new Response(JSON.stringify({ error: 'method_not_allowed' }), { status: 405, headers: jsonHeaders });
@@ -1220,18 +1245,7 @@ async function handleStats(request, env) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: jsonHeaders });
   }
 
-  const [totals, topCountries, trend, referrers, recent, engagement, profiles, identityEvents] = await Promise.all([
-    queryStats(env.DB),
-    queryTopCountries(env.DB),
-    queryTrend(env.DB, 30),
-    queryTopReferrers(env.DB),
-    queryRecent(env.DB),
-    queryEngagement(env.DB),
-    queryVisitorProfiles(env.DB),
-    queryIdentityEvents(env.DB),
-  ]);
-
-  return Response.json({ totals, topCountries, trend, referrers, recent, engagement, profiles, identityEvents }, { headers: jsonHeaders });
+  return Response.json(await queryDashboard(env.DB), { headers: jsonHeaders });
 }
 
 // ── GET /health ──
@@ -1286,13 +1300,11 @@ async function queryStats(db) {
        (SELECT COUNT(DISTINCT COALESCE(l.canonical_id, ov.profile_id, v.visitor_id))
         FROM page_views v LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
         LEFT JOIN visitor_identity_links l ON l.visitor_id = COALESCE(ov.profile_id, v.visitor_id)) AS uniq,
-       (SELECT COUNT(*) FROM page_views WHERE date(created_at) = date('now')) AS today,
        (SELECT COUNT(*) FROM page_views WHERE created_at >= datetime('now', '-1 day')) AS last24h`
   ).first();
   return {
     total: row?.total || 0,
     unique: row?.uniq || 0,
-    today: row?.today || 0,
     last24h: row?.last24h || 0,
   };
 }
@@ -1376,17 +1388,18 @@ async function queryTopCountries(db) {
   return results || [];
 }
 
-async function queryRecent(db) {
+async function queryVisits(db, where = '', values = [], limit = 100) {
   const { results } = await db.prepare(
     `SELECT v.id, v.created_at, v.country, v.city, v.region, v.referrer, v.page_url, v.visitor_id, v.user_agent,
             COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) AS profile_id,
-            v.device_type, v.os, v.browser, v.latitude, v.longitude, v.postal_code, v.isp, v.language
+            v.device_type, v.os, v.browser, v.latitude, v.longitude, v.postal_code, v.isp, v.language, ov.profile_id AS override_id
      FROM page_views v
      LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
      LEFT JOIN visitor_identity_links il ON il.visitor_id = COALESCE(ov.profile_id, v.visitor_id)
-     ORDER BY v.created_at DESC
-     LIMIT 100`
-  ).all();
+     ${where}
+     ORDER BY v.created_at DESC, v.id DESC
+     LIMIT ?`
+  ).bind(...values, limit).all();
   return (results || []).map(row => {
     const parsed = row.user_agent ? parseUADetailed(row.user_agent) : null;
     const { user_agent, ...visit } = row;
@@ -1394,16 +1407,34 @@ async function queryRecent(db) {
   });
 }
 
-// ── 30-day daily trend ──
 async function queryTrend(db, days) {
   const { results } = await db.prepare(
-    `SELECT date(created_at) as date, COUNT(*) as count
-     FROM page_views
-     WHERE created_at >= datetime('now', 'start of day', ?)
-     GROUP BY date(created_at)
-     ORDER BY date ASC`
-  ).bind(`-${days - 1} days`).all();
+    `SELECT json_extract(day.value, '$.date') AS date,
+       (SELECT COUNT(*) FROM page_views
+        WHERE created_at >= json_extract(day.value, '$.start')
+          AND created_at < json_extract(day.value, '$.end')) AS count
+     FROM json_each(?) AS day ORDER BY day.key`
+  ).bind(JSON.stringify(days)).all();
   return results || [];
+}
+
+async function queryVisitClicks(db, visit) {
+  const { visitor_id: visitor, created_at: start, id } = visit;
+  const empty = { clicks: [], hasMore: false, ambiguous: false };
+  if (!visitor || !start) return empty;
+  const next = await db.prepare(
+    `SELECT created_at FROM page_views WHERE visitor_id = ? AND created_at >= ? AND id <> ?
+     ORDER BY created_at, id LIMIT 1`
+  ).bind(visitor, start, id).first();
+  if (next?.created_at === start) return { ...empty, ambiguous: true };
+
+  const { results = [] } = await db.prepare(
+    `SELECT id, created_at, target, section, href, label_quality
+     FROM page_engagement
+     WHERE visitor_id = ? AND created_at >= ? AND created_at < ? AND event_type = 'click'
+     ORDER BY created_at DESC, id DESC LIMIT 31`
+  ).bind(visitor, start, next?.created_at || '9999-12-31 23:59:59').all();
+  return { clicks: results.slice(0, 30), hasMore: results.length > 30, ambiguous: false };
 }
 
 // ── Top referrers ──
@@ -1603,14 +1634,14 @@ function logTable(kind, columns, rows) {
   </div>`;
 }
 
-function dashboardHtml(totals, countries, visits, trend, referrers, engagement, profiles, identityEvents) {
-  const dashSeed = JSON.stringify({totals, topCountries: countries, recent: visits, trend, referrers, engagement,
+function dashboardHtml({ totals, topCountries, recent, trend, referrers, engagement, profiles, identityEvents }) {
+  const dashSeed = JSON.stringify({ totals, topCountries, recent, trend, referrers, engagement,
     profiles: profiles.map(({ id, visits, members, cities, countries, devices, oss, browsers, firstSeen, lastSeen, isps, ipHashes, timezones }) =>
       ({ id, visits, members, cities, countries, devices, oss, browsers, firstSeen, lastSeen, isps, ipHashes, timezones })),
     identityEvents
   }).replace(/</g, '\u003c').replace(/\u2028/g, '\u2028').replace(/\u2029/g, '\u2029');
   const number = new Intl.NumberFormat('en-US');
-  const recentRows = visits.length ? visits.map(v => {
+  const recentRows = recent.length ? recent.map(v => {
     const place = [v.city, v.region, v.country].filter(Boolean).join(', ');
     const device = [v.device_type, v.os, v.browser].filter(Boolean).join(' · ');
     return `<tr role="row">
@@ -1620,9 +1651,10 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
       <td role="cell" data-label="Device">${esc(device || '—')}</td>
       <td role="cell" data-label="Source">${esc(v.referrer || 'Direct')}</td>
       <td role="cell" data-label="Profile">${esc((v.profile_id || v.visitor_id || '').slice(0, 8))}</td>
+      <td role="cell" class="visit-detail-cell"></td>
       <td role="cell" class="act-col"></td>
     </tr>`;
-  }).join('') : '<tr role="row"><td role="cell" colspan="7" class="empty-state">No visits recorded yet.</td></tr>';
+  }).join('') : '<tr role="row"><td role="cell" colspan="8" class="empty-state">No visits recorded yet.</td></tr>';
 
   return `${pageHead('Dashboard', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'")}
 <body>
@@ -1639,7 +1671,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   <a href="#settings">Settings</a>
 </nav></div>
 <main class="shell" id="dashboardMain" tabindex="-1">
-  <noscript><style>#visits[hidden]{display:block!important}.overview-grid,.nav-shell,.log-tools,.search-wrap,.refresh-group{display:none!important}</style><p class="card">Enable JavaScript to use the dashboard filters, activity charts and profile tools.</p></noscript>
+  <noscript><style>#visits[hidden]{display:block!important}.overview-grid,.nav-shell,.log-tools,.search-wrap,.refresh-group,.date-filter,.visit-detail-cell{display:none!important}</style><p class="card">Enable JavaScript to use the dashboard filters, activity charts and profile tools.</p></noscript>
   <section id="overview" data-view aria-labelledby="overviewTitle">
     <header class="section-head">
       <div><p class="eyebrow">shoaibakthar.pro</p><h1 id="overviewTitle" tabindex="-1">Traffic overview</h1></div>
@@ -1647,7 +1679,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     </header>
     <div class="favorite-alert" id="favoriteAlert" hidden></div>
     <dl class="metrics">
-      ${metric('statToday', 'Views today', number.format(totals.today), 'Since midnight UTC')}
+      ${metric('statToday', 'Views today', number.format(totals.today), 'Since midnight Central')}
       ${metric('stat24h', 'Views in 24 hours', number.format(totals.last24h), 'Rolling window')}
       ${metric('statTotal', 'Total views', number.format(totals.total), 'All recorded visits')}
       ${metric('statUnique', 'Visitor profiles', number.format(totals.unique), 'Distinct profiles')}
@@ -1655,19 +1687,26 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     <div class="overview-grid">
       <section class="card plot-card" aria-labelledby="chartTitle">
         <header class="card-head">
-          <div><p class="eyebrow">Daily views · UTC</p><h2 id="chartTitle">Traffic over time</h2></div>
+          <div><p class="eyebrow">Daily views · Central</p><h2 id="chartTitle">Traffic over time</h2></div>
           <div class="periods" role="group" aria-label="Chart date range">
             <button type="button" data-days="7" aria-label="Last 7 days" aria-pressed="false">7D</button>
             <button type="button" data-days="30" aria-label="Last 30 days" aria-pressed="true">30D</button>
           </div>
         </header>
         <div class="plot-summary"><strong class="plot-total" id="plotTotal">0</strong><span id="plotSummary">views in 30 days</span></div>
+        <p class="plot-comparison" id="plotComparison"></p>
         <div class="plot-chart">
           <div class="plot-axis" id="plotAxis" aria-hidden="true"></div>
-          <div class="plot-bars" id="plotBars" role="group" aria-label="Daily views. Use the arrow keys to browse dates."></div>
+          <div class="plot-bars" id="plotBars" role="group" aria-label="Daily views. Select a bar or browse dates with the arrow keys."></div>
           <div class="plot-dates" id="plotDates" aria-hidden="true"></div>
+          <div class="plot-tooltip" id="plotTooltip" aria-hidden="true" hidden>
+            <strong id="plotTooltipDate"></strong><span id="plotTooltipCount"></span><small id="plotTooltipDelta"></small>
+          </div>
         </div>
-        <p class="plot-detail" id="plotDetail"></p>
+        <div class="plot-inspector">
+          <div><strong id="plotDetail"></strong><small id="plotDetailDelta"></small></div>
+          <a class="button" id="plotVisitLink" href="#visits">See visits <span aria-hidden="true">↗</span></a>
+        </div>
       </section>
       <section class="card" aria-labelledby="sourcesTitle">
         <header class="card-head"><div><h2 id="sourcesTitle">Traffic sources</h2><p class="muted">From the latest 200 visits</p></div></header>
@@ -1687,12 +1726,18 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   </section>
 
   <section id="visits" data-view aria-labelledby="visitsTitle" hidden>
-    <header class="section-head"><div><h1 id="visitsTitle" tabindex="-1">Visits</h1><p class="muted">The latest 100 visits, newest first</p></div></header>
+    <header class="section-head">
+      <div><h1 id="visitsTitle" tabindex="-1">Visits</h1><p class="muted" id="visitDateSummary" role="status">The latest 100 visits, newest first</p></div>
+      <div class="date-filter">
+        <label for="visitDate">Filter by date</label>
+        <div><input type="date" id="visitDate" min="2000-01-01" max="${trend.at(-1)?.date || ''}"><a class="button" id="clearVisitDate" href="#visits" hidden>Clear</a></div>
+      </div>
+    </header>
     <section class="card table-card" aria-labelledby="visitLogTitle">
       <header class="card-head"><h2 id="visitLogTitle">Recent visits</h2>
         <div class="search-wrap"><input type="search" id="recentSearch" placeholder="Search visits…" aria-label="Search visits" autocomplete="off"></div>
       </header>
-      ${logTable('recent', ['Time (Central)', 'Approx. area', 'Device', 'Source', 'Profile'], recentRows)}
+      ${logTable('recent', ['Time (Central)', 'Approx. area', 'Device', 'Source', 'Profile', 'Visit'], recentRows)}
     </section>
   </section>
 
@@ -1739,7 +1784,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     </section>
   </section>
 </main>
-<footer class="shell">Visit and interaction times use US Central time.</footer>
+<footer class="shell">All dashboard dates and times use US Central time (CST or CDT).</footer>
   <dialog class="identity-dialog" id="identityDialog" aria-labelledby="identityDialogTitle">
     <h2 id="identityDialogTitle">Are these the same person?</h2>
     <p id="identityDialogDescription">The card you opened stays. Choose another profile to add to it.</p>
@@ -1766,6 +1811,26 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     <div class="identity-dialog-actions"><button type="button" id="visitClose">Close</button></div>
   </dialog>
 
+  <dialog class="identity-dialog record-dialog" id="recordDialog" aria-labelledby="recordTitle">
+    <header class="card-head">
+      <div><p class="eyebrow" id="recordNumber"></p><h2 id="recordTitle">Visit details</h2></div>
+      <button type="button" id="recordClose" autofocus>Close</button>
+    </header>
+    <p id="recordStatus" role="status"></p>
+    <div id="recordBody" hidden>
+      <dl class="record-fields" id="recordFields"></dl>
+      <section class="record-activity" aria-labelledby="recordActivityTitle">
+        <h3 id="recordActivityTitle">Related clicks</h3>
+        <p id="recordLinkNote">Matched by visitor ID and time between visits. The association is approximate.</p>
+        <ol class="record-timeline" role="list" id="recordTimeline"></ol>
+      </section>
+      <div class="identity-dialog-actions">
+        <button type="button" id="recordReview" hidden>Review profile visits</button>
+        <button type="button" id="recordDelete" class="row-del danger-btn" data-kind="visit">Delete visit</button>
+      </div>
+    </div>
+  </dialog>
+
 <script>window.__DASH=${dashSeed};</script>
 <script>${DASHBOARD_CLIENT_JS}</script>
 </body>
@@ -1775,7 +1840,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
 function formatTime(t) {
   if (!t) return '';
   const d = new Date(t + 'Z');
-  return d.toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZone:'America/Chicago' });
+  return d.toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZone:DASHBOARD_TIME_ZONE, timeZoneName:'short' });
 }
 
 function esc(s) {

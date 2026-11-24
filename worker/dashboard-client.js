@@ -1,10 +1,15 @@
 export const DASHBOARD_CLIENT_JS = String.raw`
   var number = new Intl.NumberFormat('en-US');
-  var central = new Intl.DateTimeFormat('en-US', {month:'short', day:'numeric', hour:'numeric', minute:'2-digit', timeZone:'America/Chicago'});
+  var central = new Intl.DateTimeFormat('en-US', {month:'short', day:'numeric', hour:'numeric', minute:'2-digit', timeZone:'America/Chicago', timeZoneName:'short'});
   var dayFormat = new Intl.DateTimeFormat('en-US', {month:'short', day:'numeric', timeZone:'UTC'});
+  var longDayFormat = new Intl.DateTimeFormat('en-US', {weekday:'short', month:'short', day:'numeric', year:'numeric', timeZone:'UTC'});
   var _sd = window.__DASH;
   var selectedDays = 30;
   var selectedDay = '';
+  var chartDays = new Map();
+  var visitDay = '';
+  var dayVisits = {};
+  var dayRequest;
   var rendered = new Map();
 
   function el(id) { return document.getElementById(id); }
@@ -12,6 +17,10 @@ export const DASHBOARD_CLIENT_JS = String.raw`
     return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
   function fmtH(time) { return time ? central.format(new Date(time + 'Z')) : ''; }
+  function timestamp(time) {
+    return time ? '<time datetime="' + escH(time.replace(' ', 'T')) + 'Z">' + fmtH(time) + '</time>' : '';
+  }
+  function dayLabel(date, long) { return (long ? longDayFormat : dayFormat).format(new Date(date + 'T00:00:00Z')); }
   function device(v) {
     return [v.device_type, v.os, v.browser].filter(function(value) { return value && value !== 'Unknown'; }).join(' · ') || 'Unknown device';
   }
@@ -56,7 +65,9 @@ export const DASHBOARD_CLIENT_JS = String.raw`
       + cell('Approx. area', locationCell(row), 'main-cell')
       + cell('Device', escH(device(row)))
       + cell('Source', row.referrer ? linkCell(row.referrer) : 'Direct')
-      + cell('Profile', profileCell(row, id)) + controls.remove + '</tr>';
+      + cell('Profile', profileCell(row, id))
+      + '<td role="cell" class="visit-detail-cell"><button type="button" class="visit-open" data-visit="' + row.id + '" aria-label="Open visit ' + row.id + '">Details</button></td>'
+      + controls.remove + '</tr>';
   }
   function clickRowHtml(row, selected) {
     var id = row.profile_id || row.visitor_id || '';
@@ -87,11 +98,14 @@ export const DASHBOARD_CLIENT_JS = String.raw`
     var recent = kind === 'recent';
     var tbody = el(kind + 'Tbody');
     var search = query(kind + 'Search');
-    var rows = recent ? _sd.recent : _sd.engagement.clickDetails;
-    var next = JSON.stringify([search, rows]);
+    var date = recent ? visitDay : '';
+    var rows = recent ? (date ? dayVisits.rows || [] : _sd.recent) : _sd.engagement.clickDetails;
+    var message = date && dayVisits.message;
+    var next = JSON.stringify([search, rows, date, message]);
     if (rendered.get(kind) === next) return;
     rendered.set(kind, next);
-    var selected = new Set(selectedIds(tbody.id));
+    var selected = new Set(tbody.dataset.date === date ? selectedIds(tbody.id) : []);
+    tbody.dataset.date = date;
     var shown = rows.filter(function(row) {
       var parts = [row.city,row.region,row.country,row.visitor_id,row.profile_id];
       return matches(parts.concat(recent
@@ -99,9 +113,10 @@ export const DASHBOARD_CLIENT_JS = String.raw`
         : [row.section,row.target,row.action_id,row.label_quality,row.href]), search);
     });
     var template = recent ? rowHtml : clickRowHtml;
-    var message = search ? 'No matches. Try a different search.' : recent ? 'No visits recorded yet.' : 'No interactions recorded yet.';
+    message = message || (search && rows.length ? 'No matches. Try a different search.'
+      : date ? 'No visits recorded on this date.' : recent ? 'No visits recorded yet.' : 'No interactions recorded yet.');
     tbody.innerHTML = shown.length ? shown.map(function(row) { return template(row, selected); }).join('')
-      : '<tr role="row"><td role="cell" colspan="' + (recent ? 7 : 9) + '" class="empty-state">' + message + '</td></tr>';
+      : '<tr role="row"><td role="cell" colspan="' + (recent ? 8 : 9) + '" class="empty-state">' + message + '</td></tr>';
     updateBulkBar(kind);
     applyFavorites();
   }
@@ -115,42 +130,115 @@ export const DASHBOARD_CLIENT_JS = String.raw`
     }).join('') : '<li class="empty-state">' + empty + '</li>';
   }
 
+  function viewCount(count) { return number.format(count) + (count === 1 ? ' view' : ' views'); }
+  function compareViews(delta, baseline) {
+    if (delta === 0) return 'Same as ' + baseline;
+    var amount = Math.abs(delta);
+    return number.format(amount) + (delta > 0 ? ' more ' : ' fewer ') + (amount === 1 ? 'view' : 'views') + ' than ' + baseline;
+  }
+  function showPlotTooltip(button) {
+    var day = chartDays.get(button.dataset.date);
+    if (!day) return;
+    var tooltip = el('plotTooltip');
+    var rect = button.getBoundingClientRect();
+    var plot = tooltip.parentNode.getBoundingClientRect();
+    tooltip.style.setProperty('--tip-position', ((rect.left + rect.width / 2 - plot.left) / plot.width * 100) + '%');
+    el('plotTooltipDate').textContent = day.label;
+    el('plotTooltipCount').textContent = day.amount;
+    el('plotTooltipDelta').textContent = day.comparison;
+    tooltip.hidden = false;
+  }
   function plotDay(button, focus) {
+    var day = chartDays.get(button.dataset.date);
+    if (!day) return;
     var current = el('plotBars').querySelector('[data-active]');
-    if (current) { current.removeAttribute('data-active'); current.tabIndex = -1; }
+    if (current) { current.removeAttribute('data-active'); current.tabIndex = -1; current.setAttribute('aria-pressed', 'false'); }
     button.dataset.active = '';
     button.tabIndex = 0;
-    selectedDay = button.dataset.date;
-    el('plotDetail').textContent = button.getAttribute('aria-label');
-    if (focus) button.focus();
+    button.setAttribute('aria-pressed', 'true');
+    selectedDay = day.date;
+    el('plotDetail').textContent = dayLabel(day.date) + ' · ' + day.amount;
+    el('plotDetailDelta').textContent = day.comparison;
+    var link = el('plotVisitLink');
+    link.href = '#visits?date=' + day.date;
+    link.setAttribute('aria-label', 'See visits on ' + day.label);
+    if (focus) { button.focus({preventScroll:true}); showPlotTooltip(button); }
   }
   function renderChart() {
-    var today = new Date();
-    var points = new Map(_sd.trend.map(function(point) { return [point.date, point.count]; }));
-    var days = Array.from({length:selectedDays}, function(_, i) {
-      var date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - selectedDays + 1 + i));
-      var key = date.toISOString().slice(0, 10);
-      return {key:key, label:dayFormat.format(date), count:points.get(key) || 0};
-    });
-    var signature = JSON.stringify(days);
+    var trend = _sd.trend;
+    var span = trend.slice(-selectedDays);
+    if (!span.length) return;
+    var previous = trend.slice(-selectedDays * 2, -selectedDays);
+    var signature = JSON.stringify([span, previous]);
     if (rendered.get('plot') === signature) return;
     rendered.set('plot', signature);
-    var peak = Math.max(1, ...days.map(function(day) { return day.count; }));
-    var step = Math.pow(10, Math.floor(Math.log10(peak)));
+    el('plotTooltip').hidden = true;
+    chartDays.clear();
+    var peak = Math.max(1, ...span.map(function(day) { return day.count; }));
+    var step = Math.max(1, Math.pow(10, Math.floor(Math.log10(peak))) / 2);
     var max = Math.max(2, Math.ceil(peak / (step * 2)) * step * 2);
-    var total = days.reduce(function(sum, day) { return sum + day.count; }, 0);
+    var sum = function(days) { return days.reduce(function(total, day) { return total + day.count; }, 0); };
+    var total = sum(span);
     el('plotTotal').textContent = number.format(total);
     el('plotSummary').textContent = (total === 1 ? 'view' : 'views') + ' in ' + selectedDays + ' days';
+    el('plotComparison').textContent = previous.length === selectedDays
+      ? compareViews(total - sum(previous), 'the previous ' + selectedDays + ' days') + ' · Includes today so far'
+      : '';
     el('plotAxis').innerHTML = [max, max / 2, 0].map(function(tick) { return '<span>' + number.format(tick) + '</span>'; }).join('');
     var bars = el('plotBars');
     var focused = bars.contains(document.activeElement);
-    bars.style.setProperty('--days', selectedDays);
-    bars.innerHTML = days.map(function(day) {
-      return '<button class="chart-bar" type="button" tabindex="-1" data-date="' + day.key + '" aria-label="'
-        + day.label + ' · ' + number.format(day.count) + (day.count === 1 ? ' view' : ' views') + '"><span style="--height:' + (day.count / max * 100) + '%"></span></button>';
+    bars.style.setProperty('--days', span.length);
+    bars.innerHTML = span.map(function(day, index) {
+      var prior = index ? span[index - 1] : previous.at(-1);
+      var label = dayLabel(day.date, true);
+      var amount = viewCount(day.count) + (index === span.length - 1 ? ' so far' : '');
+      var comparison = prior ? compareViews(day.count - prior.count, 'the previous day') : '';
+      chartDays.set(day.date, {date:day.date, label:label, amount:amount, comparison:comparison});
+      return '<button class="chart-bar" type="button" tabindex="-1" data-date="' + day.date + '" aria-pressed="false" aria-label="'
+        + escH([label, amount, comparison].filter(Boolean).join(' · ')) + '"><span style="--height:' + (day.count / max * 100) + '%"></span></button>';
     }).join('');
-    el('plotDates').innerHTML = '<span>' + days[0].label + '</span><span>' + days[days.length - 1].label + '</span>';
+    el('plotDates').innerHTML = '<span>' + dayLabel(span[0].date) + '</span><span>' + dayLabel(span.at(-1).date) + '</span>';
+    el('visitDate').max = span.at(-1).date;
     plotDay(bars.querySelector('[data-date="' + selectedDay + '"]') || bars.lastElementChild, focused);
+  }
+
+  async function readDashboardData(path, signal) {
+    var result = await fetch(path, {headers:{Accept:'application/json'}, signal:signal});
+    if (result.status === 401) location.href = '/dashboard';
+    if (!result.ok) throw new Error(result.status === 404 ? 'This visit is no longer available.' : 'Could not load data. Try again.');
+    return result.json();
+  }
+
+  async function loadVisitDate(date, update) {
+    if (dayRequest) dayRequest.abort();
+    var summary = el('visitDateSummary');
+    if (!update) {
+      visitDay = date;
+      el('visitDate').value = date;
+      el('clearVisitDate').hidden = !date;
+      el('visitLogTitle').textContent = date ? 'Visits on ' + dayLabel(date) : 'Recent visits';
+      dayVisits = date ? { message:'Loading visits…' } : {};
+      summary.textContent = date ? 'Loading visits for ' + dayLabel(date, true) + ' · Central time' : 'The latest 100 visits, newest first';
+      renderLog('recent');
+    }
+    if (!date) return;
+    var request = new AbortController();
+    dayRequest = request;
+    try {
+      var data = await readDashboardData('/api/visits?date=' + encodeURIComponent(date), request.signal);
+      if (request.signal.aborted) return;
+      dayVisits = { rows:data.visits };
+      summary.textContent = (data.hasMore ? 'Latest 100 visits' : number.format(data.visits.length) + (data.visits.length === 1 ? ' visit' : ' visits'))
+        + ' on ' + dayLabel(date, true) + ' · Central time';
+      renderLog('recent');
+    } catch (err) {
+      if (request.signal.aborted || update) return;
+      dayVisits = { message:'Could not load visits for this date.' };
+      summary.textContent = 'Could not load visits. Choose a date to try again.';
+      renderLog('recent');
+    } finally {
+      if (dayRequest === request) dayRequest = null;
+    }
   }
 
   function profileName(profile) {
@@ -236,8 +324,8 @@ export const DASHBOARD_CLIENT_JS = String.raw`
     }), 'No country data yet.');
     var latest = el('latestVisits');
     latest.innerHTML = _sd.recent.length ? _sd.recent.slice(0, 5).map(function(v) {
-      var when = v.created_at ? '<time datetime="' + escH(v.created_at.replace(' ', 'T')) + 'Z">' + fmtH(v.created_at) + '</time>' : '';
-      return '<li><div><strong>' + escH(area(v) || 'Unknown area') + '</strong><small>' + escH(device(v)) + '</small></div>' + when + '</li>';
+      return '<li><button type="button" class="visit-open" data-visit="' + v.id + '"><span><strong>' + escH(area(v) || 'Unknown area')
+        + '</strong> <small>' + escH(device(v)) + '</small></span> ' + timestamp(v.created_at) + '</button></li>';
     }).join('') : '<li class="empty-state">No visits recorded yet.</li>';
     el('topClickList').innerHTML = engagement.topClicks.length ? engagement.topClicks.slice(0, 5).map(function(click) {
       var name = !click.label_quality && /^(div|span|svg)(#|\[|\s)/i.test(click.target) ? 'Unverified element' : click.target;
@@ -252,12 +340,20 @@ export const DASHBOARD_CLIENT_JS = String.raw`
 
   function selectView(moveFocus) {
     var views = Array.from(document.querySelectorAll('[data-view]'));
-    var active = views.find(function(view) { return '#' + view.id === location.hash; }) || views[0];
+    var fragment = location.hash.split('?');
+    var active = views.find(function(view) { return '#' + view.id === fragment[0]; }) || views[0];
     views.forEach(function(view) { view.hidden = view !== active; });
     el('dashboardNav').querySelectorAll('a').forEach(function(link) {
       if (link.hash === '#' + active.id) link.setAttribute('aria-current','page');
       else link.removeAttribute('aria-current');
     });
+    if (active.id === 'visits') {
+      var date = new URLSearchParams(fragment[1]).get('date') || '';
+      var field = el('visitDate');
+      field.value = date;
+      date = field.value && field.checkValidity() ? field.value : '';
+      if (date !== visitDay || (date && dayVisits.message && !dayRequest)) loadVisitDate(date, false);
+    }
     if (moveFocus && location.hash !== '#dashboardMain') {
       active.querySelector('h1').focus({preventScroll:true});
       window.scrollTo(0, 0);
@@ -281,8 +377,11 @@ export const DASHBOARD_CLIENT_JS = String.raw`
       if (!manual && (document.activeElement.closest('tbody, .profile-card') || document.querySelector('dialog[open]'))) return;
       _sd = data;
       renderDashboardData();
+      if (visitDay && location.hash.startsWith('#visits?') && visitDay === _sd.trend.at(-1)?.date && !dayRequest) {
+        loadVisitDate(visitDay, true);
+      }
       status.removeAttribute('data-error');
-      status.textContent = 'Updated ' + new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/Chicago'});
+      status.textContent = 'Updated ' + new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/Chicago',timeZoneName:'short'});
     } catch (e) {
       status.dataset.error = '';
       status.textContent = 'Refresh failed. Try again.';
@@ -309,6 +408,12 @@ export const DASHBOARD_CLIENT_JS = String.raw`
       updateBulkBar(tbody.id === 'recentTbody' ? 'recent' : 'click');
     });
   });
+  el('visitDate').addEventListener('change', function() {
+    if (!this.reportValidity()) return;
+    var date = this.value;
+    history.pushState(null, '', date ? '#visits?date=' + date : '#visits');
+    loadVisitDate(date, false);
+  });
   el('recentSearch').addEventListener('input', function() { renderLog('recent'); });
   el('clickSearch').addEventListener('input', function() { renderLog('click'); });
   el('profileSearch').addEventListener('input', renderProfiles);
@@ -323,7 +428,14 @@ export const DASHBOARD_CLIENT_JS = String.raw`
   });
   var chart = el('plotBars');
   chart.addEventListener('pointerover', function(e) {
-    if (e.pointerType === 'mouse' && e.target.matches('.chart-bar') && !chart.contains(document.activeElement)) plotDay(e.target, false);
+    if (e.pointerType === 'mouse' && e.target.matches('.chart-bar')) showPlotTooltip(e.target);
+  });
+  chart.addEventListener('pointerleave', function() { el('plotTooltip').hidden = true; });
+  chart.addEventListener('focusin', function(e) {
+    if (e.target.matches('.chart-bar')) showPlotTooltip(e.target);
+  });
+  chart.addEventListener('focusout', function(e) {
+    if (!chart.contains(e.relatedTarget)) el('plotTooltip').hidden = true;
   });
   chart.addEventListener('click', function(e) {
     if (e.target.matches('.chart-bar')) plotDay(e.target, true);
@@ -331,11 +443,79 @@ export const DASHBOARD_CLIENT_JS = String.raw`
   chart.addEventListener('keydown', function(e) {
     var button = e.target;
     if (!button.matches('.chart-bar')) return;
+    if (e.key === 'Escape') { el('plotTooltip').hidden = true; return; }
     var next = { ArrowLeft:button.previousElementSibling, ArrowRight:button.nextElementSibling,
       Home:chart.firstElementChild, End:chart.lastElementChild };
     if (!(e.key in next)) return;
     e.preventDefault();
     if (next[e.key]) plotDay(next[e.key], true);
+  });
+
+  var recordDialog = el('recordDialog');
+  var currentRecord;
+  var recordRequest;
+  function renderVisitRecord(data) {
+    var visit = data.visit;
+    var fields = [
+      ['Time (Central)', timestamp(visit.created_at)],
+      ['Approximate area', locationCell(visit)],
+      ['Device and browser', escH(device(visit))],
+      ['Traffic source', visit.referrer ? linkCell(visit.referrer) : 'Direct'],
+      ['Page', visit.page_url ? linkCell(visit.page_url, true) : ''],
+      ['Profile ID', visit.profile_id ? escH(visit.profile_id) + (visit.override_id ? ' · Reassigned' : '') : ''],
+      ['Network', visit.isp ? escH(visit.isp) : ''],
+      ['Browser language', visit.language ? escH(visit.language) : '']
+    ];
+    el('recordFields').innerHTML = fields.filter(function(pair) { return pair[1]; }).map(function(pair) {
+      return '<div><dt>' + pair[0] + '</dt><dd>' + pair[1] + '</dd></div>';
+    }).join('');
+    el('recordLinkNote').textContent = data.ambiguous
+      ? 'Multiple visits by this visitor share the same recorded second, so related clicks are unavailable.'
+      : 'Matched by visitor ID and the time between this visit and the next. The association is approximate.'
+        + (data.hasMore ? ' Showing the latest 30 clicks.' : '');
+    el('recordTimeline').innerHTML = data.clicks.length ? data.clicks.map(function(click) {
+      var target = !click.label_quality && /^(div|span|svg)(#|\[|\s)/i.test(click.target)
+        ? 'Unverified page element' : click.target || 'Unidentified click';
+      return '<li>' + timestamp(click.created_at) + '<strong>' + escH(target) + '</strong>'
+        + (click.section ? '<small>' + escH(click.section) + '</small>' : '')
+        + (click.href ? '<small>' + linkCell(click.href, true) + '</small>' : '') + '</li>';
+    }).join('') : '<li class="empty-state">' + (data.ambiguous ? 'No clicks can be assigned to this visit.' : 'No related clicks recorded.') + '</li>';
+    el('recordReview').hidden = !visit.profile_id;
+    el('recordDelete').dataset.id = visit.id;
+    el('recordStatus').textContent = '';
+    el('recordBody').hidden = false;
+    currentRecord = visit;
+  }
+  async function openVisitRecord(id) {
+    if (recordRequest) recordRequest.abort();
+    currentRecord = null;
+    el('recordNumber').textContent = 'Visit #' + id;
+    el('recordStatus').textContent = 'Loading visit…';
+    el('recordBody').hidden = true;
+    if (!recordDialog.open) recordDialog.showModal();
+    var request = new AbortController();
+    recordRequest = request;
+    try {
+      var data = await readDashboardData('/api/visit-activity?id=' + encodeURIComponent(id), request.signal);
+      if (recordDialog.open && !request.signal.aborted) renderVisitRecord(data);
+    } catch (error) {
+      if (!request.signal.aborted) el('recordStatus').textContent = error.message;
+    } finally {
+      if (recordRequest === request) recordRequest = null;
+    }
+  }
+  document.addEventListener('click', function(e) {
+    var open = e.target.closest('.visit-open');
+    if (open) openVisitRecord(open.dataset.visit);
+  });
+  el('recordClose').addEventListener('click', function() { recordDialog.close(); });
+  recordDialog.addEventListener('close', function() {
+    if (!this.open && recordRequest) recordRequest.abort();
+  });
+  el('recordReview').addEventListener('click', function() {
+    if (!currentRecord?.profile_id) return;
+    recordDialog.close();
+    openVisitDialog(currentRecord.profile_id, currentRecord);
   });
 
   var identityDialog=document.getElementById('identityDialog');
@@ -429,7 +609,7 @@ export const DASHBOARD_CLIENT_JS = String.raw`
     var list=document.getElementById('visitList');
     list.innerHTML=visitRows.length?visitRows.map(function(v){return '<div class="visit-item"><div><strong>'+escH(visitRowLabel(v))+'</strong><small>'+escH(fmtH(v.created_at))+' · '+escH(v.isp||'Unknown network')+(v.network_signal?' · network '+escH(v.network_signal):'')+'</small><small>Visit #'+v.id+(v.override_id?' · moved from original ID '+escH(v.original_id.slice(0,10)):'')+'</small></div><button type="button" class="'+(v.override_id?'visit-restore':'visit-select')+'" data-view-id="'+v.id+'">'+(v.override_id?'Undo move':'Move visit')+'</button></div>';}).join(''):'<p class="identity-note">No visits found in this profile.</p>';
   }
-  function openVisitDialog(profile){
+  function openVisitDialog(profile, record){
     if(!visitDialog)return;
     visitProfile=profile;visitRows=[];selectedVisit=null;
     document.getElementById('visitDialogTitle').textContent='Review visits · '+profile.slice(0,10);
@@ -439,8 +619,21 @@ export const DASHBOARD_CLIENT_JS = String.raw`
     visitDialog.showModal();
     fetch('/api/profile-visits?profile='+encodeURIComponent(profile),{credentials:'same-origin'})
       .then(function(r){if(!r.ok)throw Error('Could not load visits ('+r.status+').');return r.json();})
-      .then(function(d){visitRows=d.visits||[];renderVisitList();if(d.hasMore)visitError('Showing the latest 100 visits only.');})
-      .catch(function(err){visitError(err.message||'Could not load visits.');document.getElementById('visitList').innerHTML='';});
+      .then(function(d) {
+        if (!visitDialog.open || visitProfile !== profile) return;
+        visitRows = d.visits || [];
+        if (record && !visitRows.some(function(row) { return row.id === record.id; })) {
+          visitRows.unshift({...record, original_id:record.visitor_id});
+        }
+        renderVisitList();
+        if (d.hasMore) visitError(record ? 'Showing the latest 100 visits and the selected record when older.' : 'Showing the latest 100 visits only.');
+        if (record) el('visitList').querySelector('[data-view-id="' + record.id + '"]')?.focus();
+      })
+      .catch(function(err) {
+        if (!visitDialog.open || visitProfile !== profile) return;
+        visitError(err.message || 'Could not load visits.');
+        el('visitList').innerHTML = '';
+      });
   }
   if(visitDialog){
     document.getElementById('visitClose').addEventListener('click',function(){visitDialog.close();});
@@ -527,7 +720,10 @@ export const DASHBOARD_CLIENT_JS = String.raw`
       e.preventDefault();e.stopPropagation();
       var kind=del.getAttribute('data-kind'),id=del.getAttribute('data-id');
       if(!kind||!id)return;
-      if(!confirm('Delete '+(kind==='visit'?'this visit and its activity':'this interaction')+'? This cannot be undone.'))return;
+      var question = kind === 'visit'
+        ? 'Delete this visit? Related activity is cleared only when no other visit by the same visitor shares that timestamp. This cannot be undone.'
+        : 'Delete this interaction? This cannot be undone.';
+      if(!confirm(question))return;
       runDelete(kind,[id],{btn:del,busy:'…'});
       return;
     }
@@ -609,6 +805,6 @@ export const DASHBOARD_CLIENT_JS = String.raw`
     showFavoriteAlert();
   });
 
-  selectView(false);
   renderDashboardData();
+  selectView(false);
 `;
