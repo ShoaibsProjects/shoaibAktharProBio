@@ -2,7 +2,7 @@ import { DASHBOARD_CLIENT_JS } from './dashboard-client.js';
 import { dashboardStyles, themeScript } from './dashboard-style.js';
 import { centralCalendar, centralDate, centralDayRange, DASHBOARD_TIME_ZONE } from './dashboard-calendar.js';
 
-var VERSION = '3.39.2'; // bump when you change the worker code
+var VERSION = '3.39.3'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -37,8 +37,8 @@ var VERSION = '3.39.2'; // bump when you change the worker code
  *
  * SECURITY MODEL
  * ──────────────
- *   • Anonymous telemetry: exact Origin/CORS allowlist, public client marker,
- *     bounded validation, and per-IP edge/D1 rate limits (not authentication)
+ *   • Anonymous telemetry: configured Origin/CORS allowlist, same-origin page URL,
+ *     bounded validation, and edge/D1 rate limits
  *   • Session auth: HMAC-SHA-256 tokens, server-side JTI stored in D1
  *   • Rate limits: Atomic UPSERT per IP, no race-window
  *   • Bot blocking: 34 patterns filtered before DB write
@@ -49,7 +49,7 @@ var VERSION = '3.39.2'; // bump when you change the worker code
  *
  * ENDPOINTS
  * ─────────
- *   /log-visit         POST  — Page view beacon (CORS, origin+key auth)
+ *   /log-visit         POST  — Page view beacon (configured CORS and rate limits)
  *   /event             POST  — Engagement event (heartbeat/click/pagehide)
  *   /dashboard         GET   — Responsive dashboard HTML (session auth)
  *                      POST  — Login (Turnstile + key auth)
@@ -83,7 +83,7 @@ var VERSION = '3.39.2'; // bump when you change the worker code
  *
  * @module pageview-logger
  * @author Shoaib Akthar
- * @version 3.39.2
+ * @version 3.39.3
  */
 
 export default {
@@ -219,12 +219,8 @@ function securityHeaders(extra = {}) {
 }
 
 // ── Cross-origin allowlist (only known sites may call the logger) ──
-const DEFAULT_ORIGINS = 'https://shoaibsprojects.github.io,https://shoaibakthar.pro,http://localhost';
-
 function originAllowed(origin, env) {
-  if (!origin) return true; // non-browser client (curl etc.) — validated by key later
-  const list = (env.ALLOWED_ORIGINS || DEFAULT_ORIGINS).split(',').map(s => s.trim()).filter(Boolean);
-  return list.includes(origin);
+  return (env.ALLOWED_ORIGINS || '').split(',').some(allowed => allowed.trim() === origin);
 }
 
 // ── D1-backed rate limiter (atomic UPSERT — no race window) ──
@@ -416,13 +412,9 @@ async function handleLogVisit(request, env) {
 
   const { body, error } = await readTelemetry(request, 4096, base);
   if (error) return error;
-  // The browser marker filters accidental traffic. It is public.
-  if (typeof body.key !== 'string' || !body.key || !(await constantTimeEqual(body.key, env.LOG_KEY))) {
-    return Response.json({ ok: false, reason: 'unauthorized' }, { status: 401, headers: base });
-  }
 
   const pageUrl = eventPageUrl(body.pageUrl, origin);
-  if (body.pageUrl && !pageUrl) {
+  if (!pageUrl) {
     return Response.json({ ok: false, reason: 'invalid_page_url' }, { status: 400, headers: base });
   }
 
@@ -556,8 +548,9 @@ async function handleEvent(request, env) {
 
   const { body, error } = await readTelemetry(request, 2048, base);
   if (error) return error;
-  if (typeof body.key !== 'string' || !body.key || !(await constantTimeEqual(body.key, env.LOG_KEY))) {
-    return Response.json({ ok: false, reason: 'unauthorized' }, { status: 401, headers: base });
+  const pageUrl = eventPageUrl(body.pageUrl, origin);
+  if (!pageUrl) {
+    return Response.json({ ok: false, reason: 'invalid_page_url' }, { status: 400, headers: base });
   }
 
   // Identity comes from the cookie (validated by regex) — same fence as /log-visit.
@@ -609,13 +602,13 @@ async function handleEvent(request, env) {
     await env.DB.prepare(
       `INSERT INTO page_engagement (visitor_id, session_id, event_type, page_url, x, y, target, extra, section, cls, href, action_id, label_quality, source, interaction, viewport_w, viewport_h)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(vid, session_id || null, event_type, eventPageUrl(body.pageUrl, origin), x, y, target, extra, section, cls, href, actionId, labelQuality, source, interaction, viewportW, viewportH).run();
+    ).bind(vid, session_id || null, event_type, pageUrl, x, y, target, extra, section, cls, href, actionId, labelQuality, source, interaction, viewportW, viewportH).run();
   } else {
     // heartbeat / pagehide / pageshow / focus — no x/y
     await env.DB.prepare(
       `INSERT INTO page_engagement (visitor_id, session_id, event_type, page_url)
        VALUES (?, ?, ?, ?)`
-    ).bind(vid, session_id || null, event_type, eventPageUrl(body.pageUrl, origin)).run();
+    ).bind(vid, session_id || null, event_type, pageUrl).run();
   }
 
   return Response.json({ ok: true }, { headers: base });
@@ -1076,11 +1069,13 @@ async function handleDashboard(request, env) {
   });
   const session = sessionTokenFrom(request.headers.get('Cookie') || '');
 
+  const unavailable = !env.DASHBOARD_KEY || Boolean(env.TURNSTILE_SECRET) !== Boolean(env.TURNSTILE_SITE_KEY);
+
   // POST: authenticate and set session cookie
   if (request.method === 'POST') {
     const signInError = (message, status) => new Response(loginPage(message, env, nonce), { status, headers: htmlHeaders });
     if (!sameOriginMutation(request)) return signInError('Sign in from this page.', 403);
-    if (!env.DASHBOARD_KEY) return signInError('Sign-in is temporarily unavailable.', 503);
+    if (unavailable) return signInError('Sign-in is temporarily unavailable.', 503);
 
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
     const edgeStatus = await edgeLimitStatus(env, 'login:' + ip);
@@ -1147,8 +1142,8 @@ async function handleDashboard(request, env) {
     return new Response(html, { headers: htmlHeaders });
   }
 
-  return new Response(loginPage('', env, nonce), {
-    status: 401,
+  return new Response(loginPage(unavailable ? 'Sign-in is temporarily unavailable.' : '', env, nonce), {
+    status: unavailable ? 503 : 401,
     headers: htmlHeaders,
   });
 }
@@ -1255,7 +1250,7 @@ function handleHealth(request, env) {
   return Response.json({
     status: 'ok',
     ts: new Date().toISOString(),
-    bindings: { d1: 'DB' in env, dashKey: 'DASHBOARD_KEY' in env, turnstile: 'TURNSTILE_SECRET' in env, logKey: 'LOG_KEY' in env, eventLimiter: 'EVENT_INGEST_LIMITER' in env },
+    bindings: { d1: 'DB' in env, dashKey: 'DASHBOARD_KEY' in env, turnstile: 'TURNSTILE_SECRET' in env, eventLimiter: 'EVENT_INGEST_LIMITER' in env },
   }, { headers: h });
 }
 
@@ -1562,8 +1557,8 @@ function pageHead(title, nonce) {
 
 function loginPage(msg, env, nonce) {
   const error = msg ? `<p class="login-error" role="alert">${esc(msg)}</p>` : '';
-  const hasTurnstile = !!env?.TURNSTILE_SECRET;
-  const siteKey = env?.TURNSTILE_SITE_KEY || '0x4AAAAAAEEnNXNege0uqc_0';
+  const siteKey = env.TURNSTILE_SITE_KEY;
+  const hasTurnstile = Boolean(env.TURNSTILE_SECRET && siteKey);
   const turnstile = hasTurnstile ? `
     <div id="dashboardChallenge" class="cf-turnstile" data-sitekey="${esc(siteKey)}" data-action="${TURNSTILE_ACTION}" data-theme="auto" data-size="compact"></div>
     <script nonce="${nonce}">

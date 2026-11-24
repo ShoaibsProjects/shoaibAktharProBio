@@ -1621,7 +1621,6 @@
     (function trackEngagement() {
         var WORKER_URL = 'https://pageview-logger.shoaibtest2.workers.dev';
         if (!WORKER_URL) return;
-        var LOG_KEY = 'REDACTED_LEGACY_ANALYTICS_MARKER';
         var pageUrl = location.origin + location.pathname;
 
         // Stable visitor id, persisted on THIS origin (localStorage is first-party, so it
@@ -1635,7 +1634,6 @@
 
         function post(path, payload, cb) {
             try {
-                payload.key = LOG_KEY;
                 payload.pageUrl = pageUrl;
                 if (vid) payload.visitor_id = vid;
                 fetch(WORKER_URL + path, {
