@@ -1,11 +1,14 @@
-var VERSION = '3.37.0'; // bump when you change the worker code
+import { DASHBOARD_CLIENT_JS } from './dashboard-client.js';
+import { dashboardStyles, themeScript } from './dashboard-style.js';
+
+var VERSION = '3.38.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
  * =======================================================
  *
  * Purpose: Record page views and selected site activity for a personal profile
- * (shoaibsprojects.github.io/shoaibAktharProBio) with a liquid-glass dashboard.
+ * (shoaibsprojects.github.io/shoaibAktharProBio) with a private analytics dashboard.
  *
  * ARCHITECTURE
  * ────────────
@@ -47,7 +50,7 @@ var VERSION = '3.37.0'; // bump when you change the worker code
  * ─────────
  *   /log-visit         POST  — Page view beacon (CORS, origin+key auth)
  *   /event             POST  — Engagement event (heartbeat/click/pagehide)
- *   /dashboard         GET   — Liquid-glass dashboard HTML (session auth)
+ *   /dashboard         GET   — Responsive dashboard HTML (session auth)
  *                      POST  — Login (Turnstile + key auth)
  *   /stats             GET   — Dashboard data as JSON (session auth)
  *   /health            GET   — Public health check (no auth)
@@ -77,7 +80,7 @@ var VERSION = '3.37.0'; // bump when you change the worker code
  *
  * @module pageview-logger
  * @author Shoaib Akthar
- * @version 3.36.0
+ * @version 3.38.0
  */
 
 export default {
@@ -1396,10 +1399,10 @@ async function queryTrend(db, days) {
   const { results } = await db.prepare(
     `SELECT date(created_at) as date, COUNT(*) as count
      FROM page_views
-     WHERE created_at >= datetime('now', ?)
+     WHERE created_at >= datetime('now', 'start of day', ?)
      GROUP BY date(created_at)
      ORDER BY date ASC`
-  ).bind(`-${days} days`).all();
+  ).bind(`-${days - 1} days`).all();
   return results || [];
 }
 
@@ -1509,1069 +1512,234 @@ async function queryIdentityEvents(db) {
 }
 
 // ── HTML pages ──
-function loginPage(msg, env) {
-  const errorHtml = msg ? `<p style="color:#d32f2f;margin-bottom:1rem;font-size:0.85rem">${esc(msg)}</p>` : '';
-  const hasTurnstile = !!(env && env.TURNSTILE_SECRET);
-  const turnstileSiteKey = (env && env.TURNSTILE_SITE_KEY) || '0x4AAAAAAEEnNXNege0uqc_0';
-  const csp = hasTurnstile
-    ? "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; img-src 'self' data: https:; connect-src https://challenges.cloudflare.com"
-    : "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:";
-  const turnstileHtml = hasTurnstile ? `
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-  <div class="cf-turnstile" data-sitekey="${esc(turnstileSiteKey)}" data-action="turnstile-spin-v2" data-theme="auto" data-size="flexible"></div>` : '';
-  return `<!DOCTYPE html>
+const BRAND = '<span class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Site Activity</span>';
+const THEME_TOGGLE = '<button type="button" id="themeToggle" aria-label="Dark mode" aria-pressed="false" title="Dark mode"><span class="theme-icon" aria-hidden="true">◐</span></button>';
+
+function pageHead(title, csp) {
+  return `<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sign In | Site Activity</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E📊%3C/text%3E%3C/svg%3E">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
-<style>
-  *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-  :root{--bg:#eef0f6;--surface:rgba(255,255,255,0.6);--text:#1d1d1f;--muted:#86868b;--accent:#0071e3;
-    --border:rgba(255,255,255,0.5);--border-soft:rgba(20,24,32,0.08);--accent-soft:rgba(0,113,227,0.10);
-    --glass:linear-gradient(150deg,rgba(255,255,255,0.8) 0%,rgba(255,255,255,0.4) 50%,rgba(255,255,255,0.15) 100%);
-    --card-shadow:0 20px 60px -10px rgba(0,80,180,0.18),inset 0 1px 0 rgba(255,255,255,0.85),inset 0 -1px 0 rgba(255,255,255,0.25);
-    --sheen:linear-gradient(115deg,rgba(255,255,255,0.7) 0%,rgba(255,255,255,0.12) 18%,transparent 40%,rgba(255,255,255,0.0) 60%,rgba(255,255,255,0.2) 82%,transparent 100%)}
-  html[data-theme="dark"]{--bg:#0e1015;--surface:rgba(28,31,38,0.6);--text:#f5f5f7;--muted:#a1a1a6;--accent:#2997ff;
-    --border:rgba(255,255,255,0.14);--border-soft:rgba(255,255,255,0.09);--accent-soft:rgba(41,151,255,0.16);
-    --glass:linear-gradient(150deg,rgba(70,80,110,0.5) 0%,rgba(30,34,44,0.3) 50%,rgba(20,22,30,0.18) 100%);
-    --card-shadow:0 20px 60px -10px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.16),inset 0 -1px 0 rgba(0,0,0,0.4);
-    --sheen:linear-gradient(115deg,rgba(255,255,255,0.22) 0%,rgba(255,255,255,0.04) 18%,transparent 40%,transparent 60%,rgba(255,255,255,0.06) 82%,transparent 100%)}
-  @media (prefers-color-scheme: dark){
-    :root{--bg:#0e1015;--surface:rgba(28,31,38,0.6);--text:#f5f5f7;--muted:#a1a1a6;--accent:#2997ff;
-      --border:rgba(255,255,255,0.14);--border-soft:rgba(255,255,255,0.09);--accent-soft:rgba(41,151,255,0.16);
-      --glass:linear-gradient(135deg,rgba(58,68,92,0.44),rgba(28,31,38,0.28));
-      --card-shadow:0 14px 44px rgba(0,0,0,0.55),inset 0 1px 0 rgba(255,255,255,0.14),inset 0 0 24px rgba(41,151,255,0.05);
-      --sheen:linear-gradient(115deg,rgba(255,255,255,0.16) 0%,rgba(255,255,255,0.03) 28%,transparent 55%,rgba(255,255,255,0.04) 78%,transparent 100%)}
-  }
-  body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem;transition:background 0.4s,color 0.4s;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow-x:hidden}
-  body::before,body::after{content:'';position:fixed;inset:-30%;z-index:-2;pointer-events:none}
-  body::before{
-    background:
-      radial-gradient(700px 500px at 10% 0%,#d0e4ff 0%,transparent 50%),
-      radial-gradient(800px 550px at 92% 5%,#ecd9ff 0%,transparent 48%),
-      radial-gradient(900px 600px at 50% 95%,#d0f5e0 0%,transparent 50%),
-      linear-gradient(160deg,#eef2fb 0%,#e8ecf6 100%);
-    animation:none}
-  body::after{background:radial-gradient(50% 35% at 50% 0%,rgba(255,255,255,0.7) 0%,transparent 70%);animation:none;mix-blend-mode:overlay}
-  html[data-theme="dark"] body::before{
-    background:
-      radial-gradient(700px 500px at 10% 0%,rgba(25,80,170,0.3) 0%,transparent 50%),
-      radial-gradient(800px 550px at 92% 5%,rgba(80,40,170,0.32) 0%,transparent 48%),
-      radial-gradient(900px 600px at 50% 95%,rgba(15,110,60,0.22) 0%,transparent 50%),
-      linear-gradient(160deg,#0c0f18 0%,#0e111a 100%)}
-  html[data-theme="dark"] body::after{background:radial-gradient(50% 35% at 50% 0%,rgba(120,160,255,0.14) 0%,transparent 70%);mix-blend-mode:screen}
-  @keyframes aurora{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(-3%,2%,0) scale(1.04)}}
-  @keyframes aurora-glow{0%{opacity:0.5}100%{opacity:0.95}}
-  @keyframes fadeInUp{0%{opacity:0;transform:translateY(12px) scale(0.998)}50%{opacity:1}100%{opacity:1;transform:translateY(0) scale(1)}}
-  h1{background:linear-gradient(115deg,var(--text) 35%,var(--muted));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-  .box{background:var(--glass);padding:3rem 2.5rem;border-radius:28px;box-shadow:var(--card-shadow);text-align:center;max-width:420px;width:92vw;position:relative;border:1px solid var(--border);backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%);animation:fadeInUp 0.3s cubic-bezier(.22,.61,.36,1) both}
-  .box::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(120% 80% at 0% 0%,rgba(255,255,255,0.8) 0%,rgba(255,255,255,0.0) 50%);opacity:0.7}
-  .box::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--sheen);mix-blend-mode:screen;z-index:0}
-  .box>*{position:relative;z-index:1}
-  .box-content{position:relative;z-index:1}
-  .theme-toggle{position:absolute;top:1rem;right:1rem;z-index:2;background:var(--glass);color:var(--muted);border:1px solid var(--border);padding:0.35rem 0.7rem;border-radius:980px;font-size:0.75rem;cursor:pointer;font-family:inherit;font-weight:600;backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 8px rgba(20,24,32,0.05);transition:color 0.2s,border-color 0.2s,box-shadow 0.2s}
-  .theme-toggle:hover{color:var(--accent);border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.8)}
-  input{width:100%;padding:12px 16px;border:1px solid var(--border);border-radius:16px;font-size:16px;margin:1rem 0;font-family:inherit;background:rgba(255,255,255,0.5);color:var(--text);font-weight:500;transition:border-color 0.2s,box-shadow 0.2s;outline:none;backdrop-filter:blur(30px) saturate(200%);-webkit-backdrop-filter:blur(30px) saturate(200%);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 8px rgba(20,24,32,0.05)}
-  html[data-theme="dark"] input{background:rgba(40,44,55,0.5)}
-  input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.7)}
-  button{background:linear-gradient(180deg,#0a84ff,var(--accent));color:#fff;border:none;padding:12px 32px;border-radius:980px;font-size:16px;cursor:pointer;font-family:inherit;font-weight:600;letter-spacing:0.01em;transition:transform 0.25s cubic-bezier(.22,.61,.36,1),box-shadow 0.25s,opacity 0.2s;box-shadow:0 8px 24px rgba(0,113,227,0.4),inset 0 1px 0 rgba(255,255,255,0.45),inset 0 -1px 0 rgba(0,0,0,0.15)}
-  button:hover{transform:translateY(-1px);box-shadow:0 12px 32px rgba(0,113,227,0.5),inset 0 1px 0 rgba(255,255,255,0.55),inset 0 -1px 0 rgba(0,0,0,0.15)}
-  html[data-theme="dark"] button{background:linear-gradient(180deg,#3aa0ff,#2997ff);box-shadow:0 8px 24px rgba(41,151,255,0.45),inset 0 1px 0 rgba(255,255,255,0.35),inset 0 -1px 0 rgba(0,0,0,0.2)}
-  html[data-theme="dark"] button:hover{box-shadow:0 12px 32px rgba(41,151,255,0.55),inset 0 1px 0 rgba(255,255,255,0.45)}
-  .pw-wrap{position:relative;margin:1rem 0}
-  .pw-wrap input{margin:0;padding-right:48px}
-  .eye-btn{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;padding:8px;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center}
-  .eye-btn:hover{color:var(--accent)}
-  .eye-btn svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-  .cf-turnstile{display:flex;justify-content:center;margin:1rem 0}
-  @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
-</style>
-</head>
+<title>${title} | Site Activity</title>
+<script>${themeScript}</script>
+<style>${dashboardStyles}</style>
+</head>`;
+}
+
+function loginPage(msg, env) {
+  const error = msg ? `<p class="login-error" role="alert">${esc(msg)}</p>` : '';
+  const hasTurnstile = !!env?.TURNSTILE_SECRET;
+  const host = 'https://challenges.cloudflare.com';
+  const siteKey = env?.TURNSTILE_SITE_KEY || '0x4AAAAAAEEnNXNege0uqc_0';
+  const csp = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
+    + (hasTurnstile ? ` ${host}; frame-src ${host}; connect-src ${host}` : '')
+    + "; img-src 'self' data: https:";
+  const turnstile = hasTurnstile ? `
+    <div id="dashboardChallenge" class="cf-turnstile" data-sitekey="${esc(siteKey)}" data-action="turnstile-spin-v2" data-theme="auto" data-size="compact"></div>
+    <script>
+      var challenge = document.getElementById('dashboardChallenge');
+      if (challenge.clientWidth >= 300) challenge.dataset.size = 'flexible';
+    </script>
+    <script src="${host}/turnstile/v0/api.js" async defer></script>` : '';
+  return `${pageHead('Sign in', csp)}
 <body>
-<div class="box">
-  <button type="button" class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Toggle dark mode">Dark</button>
-  <h1 style="font-size:1.5rem;margin-bottom:0.5rem">Dashboard Access</h1>
-  <p style="color:var(--muted);margin-bottom:1rem">Enter access key to continue</p>
-  ${errorHtml}
-  <form method="POST" action="/dashboard" id="loginForm">
-    <div class="pw-wrap">
-      <input type="password" name="key" id="keyInput" placeholder="Access Key" autofocus autocomplete="off">
-      <button type="button" class="eye-btn" id="eyeBtn" aria-label="Show or hide key" title="Show/hide">
-        <svg viewBox="0 0 24 24" id="eyeOpen"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
-        <svg viewBox="0 0 24 24" id="eyeClosed" style="display:none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-      </button>
-    </div>
-    ${turnstileHtml}
-    <button type="submit">View Dashboard</button>
-  </form>
-  <script>
-    document.getElementById('eyeBtn').addEventListener('click', function(){
-      var input = document.getElementById('keyInput');
-      var show = input.type === 'password';
-      input.type = show ? 'text' : 'password';
-      document.getElementById('eyeOpen').style.display = show ? 'none' : 'block';
-      document.getElementById('eyeClosed').style.display = show ? 'block' : 'none';
-      input.focus();
-    });
-  </script>
-</div>
+<header class="masthead"><div class="masthead-inner shell">${BRAND}${THEME_TOGGLE}</div></header>
+<main class="login-shell shell">
+  <div class="card login-card">
+    <p class="eyebrow">shoaibakthar.pro</p>
+    <h1>Sign in to analytics</h1>
+    ${error}
+    <form method="POST" action="/dashboard">
+      <label for="keyInput">Access key</label>
+      <div class="login-field">
+        <input type="password" name="key" id="keyInput" autocomplete="off" required>
+        <button type="button" id="eyeBtn" aria-controls="keyInput" aria-label="Show access key">Show</button>
+      </div>
+      ${turnstile}
+      <button class="primary" type="submit">Sign in</button>
+    </form>
+  </div>
+</main>
 <script>
-  function readTheme(){
-    var t=null;
-    try{t=localStorage.getItem('dash-theme');}catch(e){}
-    if(!t){var m=document.cookie.match(/(?:^|;\\s*)dash-theme=([^;]*)/);if(m)t=m[1];}
-    return t;
-  }
-  function writeTheme(t){
-    try{localStorage.setItem('dash-theme',t);}catch(e){}
-    document.cookie='dash-theme='+t+'; Max-Age=31536000; Path=/; SameSite=Lax';
-  }
-  function applyTheme(){
-    var m=window.matchMedia('(prefers-color-scheme: dark)');
-    var t=readTheme()||(m.matches?'dark':'light');
-    document.documentElement.setAttribute('data-theme',t);
-    document.getElementById('themeToggle').textContent=(t==='dark')?'Light':'Dark';
-  }
-  function toggleTheme(){
-    var m=window.matchMedia('(prefers-color-scheme: dark)');
-    var cur=readTheme()||(m.matches?'dark':'light');
-    var next=cur==='dark'?'light':'dark';
-    document.documentElement.setAttribute('data-theme',next);
-    document.getElementById('themeToggle').textContent=next==='dark'?'Light':'Dark';
-    writeTheme(next);
-  }
-  applyTheme();
+  document.getElementById('eyeBtn').addEventListener('click', function () {
+    var input = document.getElementById('keyInput');
+    var show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    this.textContent = show ? 'Hide' : 'Show';
+    this.setAttribute('aria-label', show ? 'Hide access key' : 'Show access key');
+  });
 </script>
 </body>
 </html>`;
 }
 
-const DASHBOARD_CLIENT_JS = String.raw`
-  // ── Theme (localStorage with cookie fallback — mobile/private browsing blocks localStorage) ──
-  function readTheme(){
-    var t=null;
-    try{t=localStorage.getItem('dash-theme');}catch(e){}
-    if(!t){var m=document.cookie.match(/(?:^|;\s*)dash-theme=([^;]*)/);if(m)t=m[1];}
-    return t;
-  }
-  function writeTheme(t){
-    try{localStorage.setItem('dash-theme',t);}catch(e){}
-    document.cookie='dash-theme='+t+'; Max-Age=31536000; Path=/; SameSite=Lax';
-  }
-  function applyTheme(){
-    var m=window.matchMedia('(prefers-color-scheme: dark)');
-    var t=readTheme()||(m.matches?'dark':'light');
-    document.documentElement.setAttribute('data-theme',t);
-    document.getElementById('themeToggle').textContent=(t==='dark')?'Light':'Dark';
-    return t;
-  }
-  function toggleTheme(){
-    var next=applyTheme()==='dark'?'light':'dark';
-    document.documentElement.setAttribute('data-theme',next);
-    document.getElementById('themeToggle').textContent=next==='dark'?'Light':'Dark';
-    writeTheme(next);
-  }
-  // ── In-place data refresh (no page reloads — reloads were logging users out) ──
-  function escH(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-  function truncH(s,n){s=String(s);return s.length>n?s.slice(0,n)+'...':s;}
-  function fmtH(t){if(!t)return'';var d=new Date(t+'Z');return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true,timeZone:'America/Chicago'});}
-  function uaH(ua){
-    if(!ua)return'Unknown';
-    var b='Other',u=ua;
-    if(u.indexOf('Edg/')>=0)b='Edge';else if(u.indexOf('Chrome/')>=0&&u.indexOf('Chromium')<0)b='Chrome';
-    else if(u.indexOf('Firefox/')>=0)b='Firefox';else if(u.indexOf('Safari/')>=0&&u.indexOf('Chrome')<0)b='Safari';
-    var os='Unknown';
-    if(u.indexOf('Windows NT 10')>=0)os='Windows';else if(u.indexOf('Mac OS X')>=0)os='macOS';
-    else if(u.indexOf('Android')>=0)os='Android';else if(u.indexOf('iPhone')>=0||u.indexOf('iPad')>=0)os='iOS';
-    else if(u.indexOf('Linux')>=0)os='Linux';
-    return b+' \u00b7 '+os+' \u00b7 '+((u.indexOf('Mobi')>=0||u.indexOf('Android')>=0||u.indexOf('iPhone')>=0||u.indexOf('iPad')>=0)?'Mobile':'Desktop');
-  }
-  function flagH(c){if(!c||c.length!==2)return'';var a=0x1F1E6-65+c.toUpperCase().charCodeAt(0),b=0x1F1E6-65+c.toUpperCase().charCodeAt(1);return String.fromCodePoint(a,b);}
-  function refLinkH(r,n){return r?'<a href="'+escH(r)+'" rel="noreferrer" style="color:var(--accent);text-decoration:none">'+truncH(escH(r),n)+'</a>':'Direct';}
-  function agoH(t){if(!t)return'';var diff=Math.floor((Date.now()-new Date(t+'Z').getTime())/1000);if(diff<0)return'just now';if(diff<60)return diff+'s ago';if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';return Math.floor(diff/86400)+'d ago';}
-  function devH(v){var d=v.device_type||'Unknown';var o=v.os||'';var b=v.browser||'';var line=[o,b].filter(Boolean).join(' · ');return '<span class="badge">'+escH(d)+'</span>'+(line?' '+escH(line):(v.user_agent?(' '+escH(uaH(v.user_agent))):''));}
-  function locH(v){var place=[v.city,v.region,v.country].filter(Boolean).join(', ');if(!place)return v.latitude!==null&&v.latitude!==undefined?'Approximate area<div class="location-meta"><span>IP-based estimate</span><span class="map-unavailable">Place name unavailable</span></div>':'—';var url='https://maps.apple.com/?q='+encodeURIComponent(place);var map='<a class="area-map-link" href="'+escH(url)+'" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" aria-label="Open the approximate area in Apple Maps">Apple Maps ↗</a>';return escH(place)+'<div class="location-meta"><span>IP-based estimate</span>'+map+'</div>';}
-  function ispH(v){return v.isp?' <span style="font-size:0.68rem;color:var(--muted)">'+escH(v.isp)+'</span>':'';}
-  // ── Search filter state ──
-  var _allRecent=[];
-  var _allClicks=[];
-  function rowHtml(v){
-    var vid=v.profile_id||v.visitor_id||'';
-    var rid=String(v.id==null?'':v.id);
-    var isNew=(Date.now()-new Date(v.created_at+'Z').getTime())<3600000;
-    return '<tr data-vid="'+escH(vid)+'"'+(isNew?' class="new-visit"':'')+'><td class="sel-col"><input type="checkbox" class="chk row-chk" data-kind="visit" data-id="'+escH(rid)+'" aria-label="Select visit"></td><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+(isNew?' <span class="badge-new">NEW</span>':'')+'</div></td><td>'+locH(v)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge" title="Original ID: '+escH(v.visitor_id||'')+'">'+escH(vid.slice(0,8))+'</span></td><td class="act-col"><button type="button" class="row-del" data-kind="visit" data-id="'+escH(rid)+'" title="Delete this visit">🗑</button></td></tr>';
-  }
-  function renderRecent(){
-    var rt=document.getElementById('recentTbody');
-    if(!rt)return;
-    var q=(document.getElementById('recentSearch')||{}).value||'';
-    q=q.trim().toLowerCase();
-    var rv=_allRecent;
-    if(q){rv=rv.filter(function(v){
-      var hay=[v.city,v.region,v.country,v.device_type,v.os,v.browser,v.isp,v.postal_code,v.visitor_id,v.profile_id,v.referrer].filter(Boolean).join(' ').toLowerCase();
-      return hay.indexOf(q)!==-1;
-    });}
-    rt.innerHTML=rv.length?rv.map(rowHtml).join(''):'<tr><td colspan="7" class="empty-state">No visits match your filter</td></tr>';
-    updateBulkBar('recent');
-  }
-  // ── Click detail rows (filled from /stats engagement.clickDetails) ──
-  function clickRowHtml(c){
-    var vid=c.profile_id||c.visitor_id||'';
-    var cid=String(c.id==null?'':c.id);
-    var sec=c.section?escH(truncH(c.section,28)):'—';
-    var quality=['named','inferred','unknown'].indexOf(c.label_quality)>=0?c.label_quality:'legacy';
-    var raw=c.target||'';
-    var name=quality==='legacy'&&/^(div|span|svg)(#|\[|\s)/i.test(raw)?'Unverified page element':raw||'Unidentified click';
-    var qualityName={named:'Named control',inferred:'Inferred control',unknown:'Unidentified',legacy:'Earlier format'}[quality];
-    var detail=c.action_id||((quality==='legacy'&&raw!==name)?raw:'')||({site:'Your site','site-widget':'Gallery widget',outside:'Outside site content'}[c.source]||'');
-    var tgt='<div class="click-action"><strong>'+escH(truncH(name,64))+'</strong><span class="click-quality click-quality-'+quality+'">'+qualityName+'</span>'+(detail?'<small>'+escH(truncH(detail,80))+'</small>':'')+'</div>';
-    var link='—';
-    if(c.href&&/^https?:\/\//i.test(c.href))link='<a href="'+escH(c.href)+'" target="_blank" rel="noopener noreferrer" class="click-destination">'+escH(truncH(String(c.href).replace(/^https?:\/\//,''),34))+'</a>';
-    var pos=c.interaction==='non-pointer'?'Non-pointer':(c.x!=null&&c.y!=null)?c.x+','+c.y:'—';
-    if(c.viewport_w&&c.viewport_h)pos+='<small>'+c.viewport_w+' × '+c.viewport_h+' viewport</small>';
-    return '<tr data-vid="'+escH(vid)+'"><td class="sel-col"><input type="checkbox" class="chk row-chk" data-kind="engagement" data-id="'+escH(cid)+'" aria-label="Select interaction"></td><td><div>'+fmtH(c.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(c.created_at)+'</div></td><td><span class="badge" title="Original ID: '+escH(c.visitor_id||'')+'">'+escH(vid.slice(0,8))+'</span></td><td>'+locH(c)+'</td><td style="font-size:0.78rem">'+sec+'</td><td style="font-size:0.78rem">'+tgt+'</td><td>'+link+'</td><td style="font-size:0.72rem;color:var(--muted)">'+pos+'</td><td class="act-col"><button type="button" class="row-del" data-kind="engagement" data-id="'+escH(cid)+'" title="Delete this interaction">🗑</button></td></tr>';
-  }
-  function renderClicks(){
-    var tb=document.getElementById('clickTbody');
-    if(!tb)return;
-    tb.innerHTML=_allClicks.length?_allClicks.map(clickRowHtml).join(''):'<tr><td colspan="9" class="empty-state">No click data yet — appears as visitors interact</td></tr>';
-    updateBulkBar('click');
-  }
-  var _dashSig='';
-  function refresh(){
-    fetch('/stats',{headers:{'Accept':'application/json'}})
-      .then(function(r){if(r.status===401){location.href='/dashboard';return null;}return r.json();})
-      .then(function(d){
-        if(!d)return;
-        var g=function(id,v){var el=document.getElementById(id);if(el)el.textContent=v;};
-        g('statToday',d.totals.today);g('stat24h',d.totals.last24h);g('statTotal',d.totals.total);g('statUnique',d.totals.unique);
-        g('statClicks',(d.engagement&&d.engagement.totalClicks)||0);
-        var top=(d.engagement&&d.engagement.topClicks)||[],topList=document.getElementById('topClickList');
-        if(topList)topList.innerHTML=top.length?top.slice(0,3).map(function(c){var name=!c.label_quality&&/^(div|span|svg)(#|\[|\s)/i.test(c.target)?'Unverified element':c.target;return escH(name)+' <strong>'+c.count+'</strong>';}).join(' &middot; '):'—';
-        if(_sd&&d.identityEvents&&((d.identityEvents[0]&&d.identityEvents[0].id)||'')!==_sd.identityRevision){location.reload();return;}
-        var rec=d.recent||[],ck=(d.engagement&&d.engagement.clickDetails)||[];
-        var refs=d.referrers||[],cc=d.topCountries||[];
-        var sig=(rec[0]?rec[0].created_at:'')+'|'+rec.length+'|'+(ck[0]?ck[0].created_at:'')+'|'+ck.length
-          +'|'+(refs[0]?refs[0].count:0)+'|'+refs.length+'|'+(cc[0]?cc[0].count:0)+'|'+cc.length;
-        if(sig!==_dashSig){
-          _dashSig=sig;
-          var tr=d.trend||[];
-          if(tr.length){
-            var mx=Math.max.apply(null,tr.map(function(t){return t.count;}))||1;
-            var pts=tr.map(function(t,i){var x=tr.length===1?50:(i/(tr.length-1))*100;return x+','+(40-(t.count/mx)*38);}).join(' ');
-            var poly=document.getElementById('trendPoly');if(poly)poly.setAttribute('points','0,40 '+pts+' 100,40');
-            var dl=document.getElementById('trendDate');
-            if(dl)dl.innerHTML='<span>'+tr[0].date+'</span><span>Peak: '+mx+'</span><span>'+tr[tr.length-1].date+'</span>';
-          }
-          var ref=document.getElementById('refList');
-          if(ref){
-            var rx=refs,rmax=Math.max(1,rx.length?rx[0].count:1);
-            ref.innerHTML=rx.length?rx.map(function(r){var pct=(r.count/rmax)*100;return '<div class="ref-item"><span class="ref-name">'+escH(r.source)+'</span><div class="ref-bar"><div class="ref-fill" style="width:'+pct+'%"></div></div><span class="ref-count">'+r.count+'</span></div>';}).join(''):'<p class="empty-state">No referrer data</p>';
-          }
-          var cl=document.getElementById('countryList');
-          if(cl){
-            cl.innerHTML=cc.map(function(c){return '<span class="country-chip"><strong>'+c.count+'</strong> '+flagH(c.country)+' '+escH(c.country)+'</span>';}).join('');
-          }
-          _allRecent=rec;
-          renderRecent();
-          _allClicks=ck;
-          renderClicks();
-          applyFavorites();
-          showFavoriteAlert();
-        }
-      })
-      .catch(function(){});
-  }
-  applyTheme();
-  var _sd=window.__DASH;
-  if(_sd){_allRecent=_sd.recent||[];_allClicks=_sd.clicks||[];renderClicks();
-    _dashSig=((_sd.recent&&_sd.recent[0])?_sd.recent[0].created_at:'')+'|'+(_sd.recent?_sd.recent.length:0)
-      +'|'+((_sd.clicks&&_sd.clicks[0])?_sd.clicks[0].created_at:'')+'|'+(_sd.clicks?_sd.clicks.length:0)
-      +'|'+(_sd.refSig||'0|0')+'|'+(_sd.ccSig||'0|0');
-  }
-  else{refresh();}
-  setInterval(refresh,60000);
-  var si=document.getElementById('recentSearch');
-  if(si)si.addEventListener('input',renderRecent);
 
-  var identityDialog=document.getElementById('identityDialog');
-  var identityState=null;
-  function identityProfile(id){return ((_sd&&_sd.profiles)||[]).find(function(p){return p.id===id;});}
-  function identitySummary(p){return p?((p.oss||[]).concat(p.browsers||[]).concat(p.cities||[]).filter(Boolean).slice(0,3).join(' · ')||'Unknown device')+' · '+p.visits+' visits · '+p.members.length+' ID'+(p.members.length===1?'':'s'):'No visits';}
-  function sharedSignal(a,b,key){return (a[key]||[]).some(function(x){return (b[key]||[]).indexOf(x)>=0;});}
-  function identityReview(){
-    if(!identityState)return;
-    var keep=identityState.source,add=identityState.action==='merge'?document.getElementById('identityTarget').value:identityState.target;
-    var left=identityProfile(keep),right=identityProfile(add);
-    document.getElementById('identityFrom').textContent=identityState.action==='merge'?keep+'\n'+identitySummary(left):keep;
-    document.getElementById('identityTo').textContent=add?add+'\n'+identitySummary(right):'Choose a second profile above';
-    if(identityState.action==='merge'){
-      var differentCountry=left&&right&&left.countries.length&&right.countries.length&&!sharedSignal(left,right,'countries');
-      var differentDevice=left&&right&&left.oss.length&&right.oss.length&&!sharedSignal(left,right,'oss');
-      var signal=document.getElementById('identitySignals');
-      signal.textContent=!add?'Choose a second profile to compare.':differentCountry&&differentDevice?'Caution: these profiles show different countries and devices. Review visits before combining.':differentCountry?'Caution: the countries differ. Location alone is not proof they are different people.':differentDevice?'Caution: the devices differ. A person may use more than one device.':'Device and location clues can help, but they do not prove two profiles are the same person.';
-      signal.classList.toggle('identity-warning',!!(differentCountry||differentDevice));
-      document.getElementById('identityOutcome').textContent=left&&right?'After combining: one profile with '+(left.visits+right.visits)+' visits. The visitor count drops by one; original visits and clicks are unchanged. '+(right.members.length>1?'This adds '+right.members.length+' IDs; undo by unlinking each added ID.':'You can undo by clicking Unlink on the added ID.') :'';
-      document.getElementById('identityApproval').disabled=!add;
-      if(!add)document.getElementById('identityApproval').checked=false;
-      document.getElementById('identityConfirm').disabled=!add||!document.getElementById('identityApproval').checked;
-    }else document.getElementById('identityConfirm').disabled=false;
-  }
-  function identityOpen(action,source,target){
-    if(!identityDialog)return;
-    identityState={action:action,source:source,target:target||''};
-    var select=document.getElementById('identityTarget');
-    var wrap=document.getElementById('identityTargetWrap');
-    var confirm=document.getElementById('identityConfirm');
-    var err=document.getElementById('identityError');
-    err.hidden=true;err.textContent='';
-    document.getElementById('identityApproval').checked=false;
-    select.innerHTML='';
-    if(action==='merge'){
-      wrap.hidden=false;
-      var placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Select a profile to add…';placeholder.disabled=true;placeholder.selected=true;select.appendChild(placeholder);
-      ((_sd&&_sd.profiles)||[]).filter(function(p){return p.id!==source;}).forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent=p.id.slice(0,10)+' · '+identitySummary(p);select.appendChild(o);});
-      document.getElementById('identityDialogTitle').textContent='Are these the same person?';
-      document.getElementById('identityDialogDescription').textContent='This profile stays as the main card. Choose a second profile to add only when you recognize both as the same person. To separate people already mixed in one card, use Review visits instead.';
-      document.getElementById('identityFromLabel').textContent='Keep this profile';
-      document.getElementById('identityToLabel').textContent='Add this profile';
-      document.getElementById('identitySignals').hidden=false;
-      document.getElementById('identityOutcome').hidden=false;
-      document.getElementById('identityApprovalWrap').hidden=false;
-      confirm.textContent='Combine into this profile';confirm.disabled=true;
-      if(select.options.length===1){err.textContent='There are no other profiles to combine.';err.hidden=false;}
-    }else{
-      wrap.hidden=true;
-      document.getElementById('identityDialogTitle').textContent='Unlink visitor ID';
-      document.getElementById('identityDialogDescription').textContent='This only removes a recent profile link. It cannot split older visits that were stored with the same ID; use Review visits for those.';
-      document.getElementById('identityFromLabel').textContent='ID to unlink';
-      document.getElementById('identityToLabel').textContent='Current profile';
-      document.getElementById('identitySignals').hidden=true;
-      document.getElementById('identityOutcome').hidden=true;
-      document.getElementById('identityApprovalWrap').hidden=true;
-      confirm.textContent='Unlink ID';confirm.disabled=false;
-    }
-    identityReview();identityDialog.showModal();
-  }
-  if(identityDialog){
-    document.getElementById('identityTarget').addEventListener('change',function(){document.getElementById('identityApproval').checked=false;identityReview();});
-    document.getElementById('identityApproval').addEventListener('change',identityReview);
-    document.getElementById('identityCancel').addEventListener('click',function(){identityDialog.close();});
-    document.getElementById('identityConfirm').addEventListener('click',function(){
-      if(!identityState)return;
-      var confirm=this,err=document.getElementById('identityError');
-      var action=identityState.action,keepProfile=identityState.source,addProfile=action==='merge'?document.getElementById('identityTarget').value:identityState.target;
-      var url=action==='merge'?'/api/merge-visitors':'/api/unmerge-visitor';
-      var payload=action==='merge'?{source:addProfile,target:keepProfile}:{visitorId:keepProfile,canonicalId:addProfile};
-      if(action==='merge'&&!document.getElementById('identityApproval').checked)return;
-      confirm.disabled=true;confirm.textContent='Saving…';err.hidden=true;
-      fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
-        .then(function(r){return r.json().then(function(d){return{status:r.status,data:d};});})
-        .then(function(result){if(result.data&&result.data.ok){location.reload();return;}err.textContent=(result.data&&result.data.message)||('Could not save ('+((result.data&&result.data.error)||result.status)+'). Refresh and try again.');err.hidden=false;confirm.textContent=action==='merge'?'Combine into this profile':'Unlink ID';identityReview();})
-        .catch(function(){err.textContent='Network error. Please try again.';err.hidden=false;confirm.textContent=action==='merge'?'Combine into this profile':'Unlink ID';identityReview();});
-    });
-  }
-  document.addEventListener('click',function(e){
-    var merge=e.target.closest('.profile-merge');
-    if(merge){e.preventDefault();identityOpen('merge',merge.getAttribute('data-vid'));return;}
-    var separate=e.target.closest('.profile-separate');
-    if(separate){e.preventDefault();identityOpen('separate',separate.getAttribute('data-member'),separate.getAttribute('data-canonical'));}
-  });
+function metric(id, label, value, detail = '') {
+  return `<div class="metric"><dt>${label}</dt><dd class="metric-value" id="${id}">${value}</dd>${detail ? `<dd class="muted">${detail}</dd>` : ''}</div>`;
+}
 
-  var visitDialog=document.getElementById('visitDialog'),visitProfile='',visitRows=[],selectedVisit=null;
-  function visitError(message){var el=document.getElementById('visitError');el.textContent=message;el.hidden=false;}
-  function visitRowLabel(v){return (v.city||v.region||v.country||'Unknown area')+' · '+(v.os||v.device_type||'Unknown device')+' · '+(v.browser||'Unknown browser');}
-  function renderVisitList(){
-    var list=document.getElementById('visitList');
-    list.innerHTML=visitRows.length?visitRows.map(function(v){return '<div class="visit-item"><div><strong>'+escH(visitRowLabel(v))+'</strong><small>'+escH(fmtH(v.created_at))+' · '+escH(v.isp||'Unknown network')+(v.network_signal?' · network '+escH(v.network_signal):'')+'</small><small>Visit #'+v.id+(v.override_id?' · moved from original ID '+escH(v.original_id.slice(0,10)):'')+'</small></div><button type="button" class="'+(v.override_id?'visit-restore':'visit-select')+'" data-view-id="'+v.id+'">'+(v.override_id?'Undo move':'Move visit')+'</button></div>';}).join(''):'<p class="identity-note">No visits found in this profile.</p>';
-  }
-  function openVisitDialog(profile){
-    if(!visitDialog)return;
-    visitProfile=profile;visitRows=[];selectedVisit=null;
-    document.getElementById('visitDialogTitle').textContent='Review visits · '+profile.slice(0,10);
-    document.getElementById('visitList').innerHTML='<p class="identity-note">Loading visits…</p>';
-    document.getElementById('visitEditor').hidden=true;
-    document.getElementById('visitError').hidden=true;
-    visitDialog.showModal();
-    fetch('/api/profile-visits?profile='+encodeURIComponent(profile),{credentials:'same-origin'})
-      .then(function(r){if(!r.ok)throw Error('Could not load visits ('+r.status+').');return r.json();})
-      .then(function(d){visitRows=d.visits||[];renderVisitList();if(d.hasMore)visitError('Showing the latest 100 visits only.');})
-      .catch(function(err){visitError(err.message||'Could not load visits.');document.getElementById('visitList').innerHTML='';});
-  }
-  if(visitDialog){
-    document.getElementById('visitClose').addEventListener('click',function(){visitDialog.close();});
-    document.getElementById('visitCancelMove').addEventListener('click',function(){document.getElementById('visitEditor').hidden=true;selectedVisit=null;});
-    document.getElementById('visitList').addEventListener('click',function(e){
-      var button=e.target.closest('button[data-view-id]');if(!button)return;
-      var id=Number(button.getAttribute('data-view-id'));
-      var visit=visitRows.find(function(v){return v.id===id;});if(!visit)return;
-      var err=document.getElementById('visitError');err.hidden=true;
-      if(button.classList.contains('visit-restore')){
-        button.disabled=true;button.textContent='Restoring…';
-        fetch('/api/restore-visit',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({viewId:id,profileId:visitProfile})})
-          .then(function(r){return r.json();}).then(function(d){if(d.ok){location.reload();return;}visitError(d.message||'Could not undo the move. Refresh and try again.');button.disabled=false;button.textContent='Undo move';})
-          .catch(function(){visitError('Network error. Please try again.');button.disabled=false;button.textContent='Undo move';});
-        return;
-      }
-      selectedVisit=visit;
-      document.getElementById('visitSelected').textContent='Move visit #'+id+' · '+visitRowLabel(visit)+' · '+fmtH(visit.created_at);
-      var select=document.getElementById('visitDestination');select.innerHTML='';
-      var fresh=document.createElement('option');fresh.value='new';fresh.textContent='Create a new separate profile';select.appendChild(fresh);
-      ((_sd&&_sd.profiles)||[]).filter(function(p){return p.id!==visitProfile;}).forEach(function(p){var o=document.createElement('option');o.value=p.id;o.textContent='Existing: '+p.id.slice(0,10)+' · '+identitySummary(p);select.appendChild(o);});
-      document.getElementById('visitEditor').hidden=false;
-    });
-    document.getElementById('visitConfirmMove').addEventListener('click',function(){
-      if(!selectedVisit)return;
-      var button=this;button.disabled=true;button.textContent='Moving…';
-      fetch('/api/move-visit',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({viewId:selectedVisit.id,fromProfile:visitProfile,targetProfile:document.getElementById('visitDestination').value})})
-        .then(function(r){return r.json();}).then(function(d){if(d.ok){location.reload();return;}visitError(d.message||'Could not move this visit. Refresh and try again.');button.disabled=false;button.textContent='Move visit';})
-        .catch(function(){visitError('Network error. Please try again.');button.disabled=false;button.textContent='Move visit';});
-    });
-  }
-  document.addEventListener('click',function(e){var button=e.target.closest('.profile-review');if(button){e.preventDefault();openVisitDialog(button.getAttribute('data-vid'));}});
-
-  // ── Reset engagement data (clicks, heartbeats, sessions) ──
-  document.addEventListener('click',function(e){
-    var btn=e.target.closest('.reset-eng');
-    if(!btn)return;
-    e.preventDefault();e.stopPropagation();
-    if(!confirm('Clear all click and session activity? This cannot be undone.'))return;
-    btn.disabled=true;btn.textContent='Resetting…';
-    fetch('/api/reset-engagement',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'}})
-      .then(function(r){return r.json().catch(function(){return{ok:false}});})
-      .then(function(d){
-        if(d&&d.ok){location.reload();}
-        else{alert('Reset failed: '+(d&&d.error||'unknown'));btn.disabled=false;btn.textContent='Reset';}
-      })
-      .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='Reset';});
-  });
-
-  // ── Delete data: per-visit, per-interaction, per-profile, bulk + danger zone ──
-  function apiDelete(scope,ids){
-    return fetch('/api/delete',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope:scope,ids:ids||[]})})
-      .then(function(r){return r.json().catch(function(){return{ok:false,error:'bad_response'};});});
-  }
-  function selectedIds(tbodyId){
-    var out=[],body=document.getElementById(tbodyId);
-    if(!body)return out;
-    Array.prototype.forEach.call(body.querySelectorAll('.row-chk:checked'),function(c){var id=c.getAttribute('data-id');if(id)out.push(id);});
-    return out;
-  }
-  function updateBulkBar(which){
-    var isRecent=which==='recent';
-    var tbody=document.getElementById(isRecent?'recentTbody':'clickTbody');
-    if(!tbody)return;
-    var bar=document.getElementById(isRecent?'recentBulk':'clickBulk');
-    var cnt=document.getElementById(isRecent?'recentSelCount':'clickSelCount');
-    var all=document.getElementById(isRecent?'recentAll':'clickAll');
-    var n=selectedIds(isRecent?'recentTbody':'clickTbody').length;
-    if(cnt)cnt.textContent=n;
-    if(bar)bar.hidden=(n===0);
-    if(all)all.checked=(n>0&&n===tbody.querySelectorAll('.row-chk').length);
-  }
-  document.addEventListener('change',function(e){
-    var t=e.target;if(!t)return;
-    if(t.classList&&t.classList.contains('row-chk')){updateBulkBar(t.closest('#clickTbody')?'click':'recent');}
-    else if(t.id==='recentAll'||t.id==='clickAll'){
-      var which=t.id==='recentAll'?'recent':'click';
-      Array.prototype.forEach.call(document.getElementById(which==='recent'?'recentTbody':'clickTbody').querySelectorAll('.row-chk'),function(c){c.checked=t.checked;});
-      updateBulkBar(which);
-    }
-  });
-  function runDelete(scope,ids,opts){
-    opts=opts||{};
-    var btn=opts.btn;
-    if(btn){btn.disabled=true;btn.dataset.t=btn.textContent;btn.textContent=opts.busy||'Deleting…';}
-    return apiDelete(scope,ids).then(function(d){
-      if(d&&d.ok){location.reload();return;}
-      alert('Delete failed: '+((d&&d.error)||'unknown'));
-      if(btn){btn.disabled=false;btn.textContent=btn.dataset.t||'Delete';}
-    }).catch(function(){alert('Network error');if(btn){btn.disabled=false;btn.textContent=btn.dataset.t||'Delete';}});
-  }
-  document.addEventListener('click',function(e){
-    var del=e.target.closest('.row-del');
-    if(del){
-      e.preventDefault();e.stopPropagation();
-      var kind=del.getAttribute('data-kind'),id=del.getAttribute('data-id');
-      if(!kind||!id)return;
-      if(!confirm('Delete '+(kind==='visit'?'this visit and its activity':'this interaction')+'? This cannot be undone.'))return;
-      runDelete(kind,[id],{btn:del,busy:'…'});
-      return;
-    }
-    var pd=e.target.closest('.profile-delete');
-    if(pd){
-      e.preventDefault();e.stopPropagation();
-      var vid=pd.getAttribute('data-vid');if(!vid)return;
-      if(!confirm('Delete profile '+vid.slice(0,10)+' and ALL of its visits, interactions and identity links? This cannot be undone.'))return;
-      runDelete('visitor',[vid],{btn:pd,busy:'Deleting…'});
-      return;
-    }
-    if(e.target.closest('#recentBulkDelete')){
-      var rids=selectedIds('recentTbody');if(!rids.length)return;
-      if(!confirm('Delete '+rids.length+' selected visit'+(rids.length>1?'s':'')+' and their activity? This cannot be undone.'))return;
-      runDelete('visit',rids,{btn:document.getElementById('recentBulkDelete')});
-      return;
-    }
-    if(e.target.closest('#clickBulkDelete')){
-      var cids=selectedIds('clickTbody');if(!cids.length)return;
-      if(!confirm('Delete '+cids.length+' selected interaction'+(cids.length>1?'s':'')+'? This cannot be undone.'))return;
-      runDelete('engagement',cids,{btn:document.getElementById('clickBulkDelete')});
-      return;
-    }
-    if(e.target.closest('#recentClearSel')){Array.prototype.forEach.call(document.getElementById('recentTbody').querySelectorAll('.row-chk'),function(c){c.checked=false;});updateBulkBar('recent');return;}
-    if(e.target.closest('#clickClearSel')){Array.prototype.forEach.call(document.getElementById('clickTbody').querySelectorAll('.row-chk'),function(c){c.checked=false;});updateBulkBar('click');return;}
-    var dz=e.target.closest('.danger-btn[data-danger]');
-    if(dz){
-      var scope=dz.getAttribute('data-danger');
-      var msg=scope==='all'?'Delete ALL analytics data (every visit, interaction, engagement row and identity link)? This cannot be undone.'
-        :scope==='all_visits'?'Delete ALL visits and identity corrections? Clicks/engagement are kept. This cannot be undone.'
-        :'Delete ALL clicks & engagement? Visits are kept. This cannot be undone.';
-      if(!confirm(msg))return;
-      if(scope==='all'&&!confirm('Final confirmation — permanently erase all analytics data?'))return;
-      runDelete(scope,[],{btn:dz,busy:'Deleting…'});
-      return;
-    }
-  });
-
-  // ── Saved visitor profiles (local browser preference) ──
-  var FAVORITES_KEY='dash-favorites';
-  function getFavorites(){try{var v=localStorage.getItem(FAVORITES_KEY);return v?JSON.parse(v):[];}catch(e){return[];}}
-  function saveFavorites(arr){try{localStorage.setItem(FAVORITES_KEY,JSON.stringify(arr));}catch(e){}}
-
-  // Highlight saved profiles and their recent visits
-  function applyFavorites(){
-    var favorites=getFavorites();
-    // Profile cards
-    document.querySelectorAll('.profile-card').forEach(function(c){
-      var vid=c.getAttribute('data-vid');
-      var btn=c.querySelector('.favorite-btn');
-      if(favorites.indexOf(vid)>=0){c.classList.add('is-favorite');if(btn)btn.textContent='★ Saved';}
-      else{if(btn)btn.textContent='☆ Save';}
-    });
-    // Recent visit rows
-    document.querySelectorAll('tr[data-vid]').forEach(function(r){
-      if(favorites.indexOf(r.getAttribute('data-vid'))>=0)r.classList.add('favorite-visit');
-    });
-  }
-
-  // Pin saved profiles to the top of the grid
-  function pinFavorites(){
-    var grid=document.getElementById('profileGrid');
-    if(!grid)return;
-    var favorites=getFavorites();
-    var cards=Array.from(grid.querySelectorAll('.profile-card'));
-    cards.sort(function(a,b){
-      var aSaved=favorites.indexOf(a.getAttribute('data-vid'))>=0?0:1;
-      var bSaved=favorites.indexOf(b.getAttribute('data-vid'))>=0?0:1;
-      return aSaved-bSaved;
-    });
-    cards.forEach(function(c){grid.appendChild(c);});
-  }
-
-  // Highlight when a saved profile has appeared in the last day
-  function showFavoriteAlert(){
-    var el=document.getElementById('favoriteAlert');
-    if(!el)return;
-    var favorites=getFavorites();
-    if(!favorites.length){el.hidden=true;return;}
-    var now=Date.now(),WIN=24*3600000,best=null;
-    document.querySelectorAll('.profile-card[data-vid][data-lastseen]').forEach(function(c){
-      var vid=c.getAttribute('data-vid');
-      if(favorites.indexOf(vid)<0)return;
-      var ls=new Date(c.getAttribute('data-lastseen')+'Z').getTime();
-      if(isNaN(ls))return;
-      var age=now-ls;
-      if(age>=0&&age<WIN&&(!best||ls>best.ls)){
-        best={ls:ls,vid:vid,name:(c.querySelector('.profile-name')||{}).textContent||vid.slice(0,8)};
-      }
-    });
-    if(best){
-      var mins=Math.floor((now-best.ls)/60000);
-      var when=mins<1?'just now':mins<60?mins+'m ago':Math.floor(mins/60)+'h ago';
-      el.innerHTML='<span style="font-size:1.15rem;line-height:1">★</span> <span><strong>'+escH(best.name)+'</strong> visited '+when+'</span><button type="button" onclick="this.parentNode.hidden=true" title="Dismiss" style="margin-left:auto;background:none;border:none;color:inherit;font-size:1.1rem;cursor:pointer;line-height:1">&times;</button>';
-      el.hidden=false;
-    }else{el.hidden=true;}
-  }
-
-  // Save or remove a profile from the favorites list
-  document.addEventListener('click',function(e){
-    var btn=e.target.closest('.favorite-btn');
-    if(!btn)return;
-    var vid=btn.getAttribute('data-vid');
-    if(!vid)return;
-    var favorites=getFavorites();
-    var idx=favorites.indexOf(vid);
-    if(idx>=0){favorites.splice(idx,1);btn.textContent='☆ Save';}else{favorites.push(vid);btn.textContent='★ Saved';}
-    saveFavorites(favorites);
-    applyFavorites();
-    pinFavorites();
-    showFavoriteAlert();
-  });
-
-  // Apply saved-profile preferences and the recent-activity alert
-  applyFavorites();
-  pinFavorites();
-  showFavoriteAlert();
-
-`;
+function logTable(kind, columns, rows) {
+  const visits = kind === 'recent';
+  const label = visits ? 'visits' : 'interactions';
+  return `<div class="log-tools">
+    <button type="button" class="manage-log" aria-pressed="false">Manage records</button>
+    <label class="select-all"><input type="checkbox" class="chk" id="${kind}All"> Select all shown</label>
+    <div class="bulkbar" id="${kind}Bulk" hidden>
+      <span><strong id="${kind}SelCount">0</strong> selected</span>
+      <button type="button" id="${kind}ClearSel">Clear</button>
+      <button type="button" class="danger-btn" id="${kind}BulkDelete">Delete selected ${label}</button>
+    </div>
+  </div>
+  <div class="table-scroll-x">
+    <table class="log-table" role="table" aria-label="${visits ? 'Recent visits' : 'Recent interactions'}">
+      <thead role="rowgroup"><tr role="row"><th scope="col" class="sel-col"><span class="sr-only">Select</span></th>
+        ${columns.map(column => `<th scope="col">${column}</th>`).join('')}<th scope="col" class="act-col"><span class="sr-only">Actions</span></th>
+      </tr></thead>
+      <tbody role="rowgroup" id="${visits ? 'recentTbody' : 'clickTbody'}">${rows}</tbody>
+    </table>
+  </div>`;
+}
 
 function dashboardHtml(totals, countries, visits, trend, referrers, engagement, profiles, identityEvents) {
-  const trendMax = Math.max(1, ...trend.map(t => t.count));
-  const trendPoints = trend.length ? trend.map((t, i) => {
-    const x = (trend.length === 1) ? 50 : (i / (trend.length - 1)) * 100;
-    const y = 40 - (t.count / trendMax) * 38;
-    return x + ',' + y;
-  }).join(' ') : '';
-  const trendPoly = trendPoints ? '0,40 ' + trendPoints + ' 100,40' : '';
-  const refMax = Math.max(1, ...referrers.map(r => r.count));
-  const trendEmpty = trend.length === 0;
-  const referrerRows = referrers.length ? referrers.map(r => {
-    const pct = (r.count / refMax) * 100;
-    return '<div class="ref-item"><span class="ref-name">' + esc(r.source) + '</span>'
-      + '<div class="ref-bar"><div class="ref-fill" style="width:' + pct + '%"></div></div>'
-      + '<span class="ref-count">' + r.count + '</span></div>';
-  }).join('') : '<p class="empty-state">No referrer data</p>';
+  const dashSeed = JSON.stringify({totals, topCountries: countries, recent: visits, trend, referrers, engagement,
+    profiles: profiles.map(({ id, visits, members, cities, countries, devices, oss, browsers, firstSeen, lastSeen, isps, ipHashes, timezones }) =>
+      ({ id, visits, members, cities, countries, devices, oss, browsers, firstSeen, lastSeen, isps, ipHashes, timezones })),
+    identityEvents
+  }).replace(/</g, '\u003c').replace(/\u2028/g, '\u2028').replace(/\u2029/g, '\u2029');
+  const number = new Intl.NumberFormat('en-US');
+  const recentRows = visits.length ? visits.map(v => {
+    const place = [v.city, v.region, v.country].filter(Boolean).join(', ');
+    const device = [v.device_type, v.os, v.browser].filter(Boolean).join(' · ');
+    return `<tr role="row">
+      <td role="cell" class="sel-col"></td>
+      <td role="cell" class="time-cell" data-label="Time (Central)">${formatTime(v.created_at)}</td>
+      <td role="cell" class="main-cell" data-label="Approx. area">${esc(place || (v.latitude != null || v.longitude != null ? 'Approximate area' : '—'))}${coordH(v)}</td>
+      <td role="cell" data-label="Device">${esc(device || '—')}</td>
+      <td role="cell" data-label="Source">${esc(v.referrer || 'Direct')}</td>
+      <td role="cell" data-label="Profile">${esc((v.profile_id || v.visitor_id || '').slice(0, 8))}</td>
+      <td role="cell" class="act-col"></td>
+    </tr>`;
+  }).join('') : '<tr role="row"><td role="cell" colspan="7" class="empty-state">No visits recorded yet.</td></tr>';
 
-  // Engagement stat cards — always visible (show zeros when there's no data yet)
-  var eng = engagement || {};
-  var topClicks = eng.topClicks || [];
-  var engagementHtml = '<div class="stats" style="margin-bottom:1.5rem">'
-    + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="statSessions">' + (eng.sessions || 0) + '</div><div class="stat-label">Sessions</div></div>'
-    + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></div><div class="stat-value" id="statAvg">' + fmtDur(eng.avgDurationSec || 0) + '</div><div class="stat-label">Avg. Time on Page</div></div>'
-    + '<div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div><div class="stat-value" id="statClicks">' + (eng.totalClicks || 0) + '</div><div class="stat-label">Total Clicks</div></div>'
-    + '<div class="stat-card" style="display:flex;flex-direction:column;justify-content:center"><div class="stat-label" style="margin-bottom:0.4rem">Most clicked</div><div id="topClickList" style="font-size:0.8rem;color:var(--muted);line-height:1.5">' + (topClicks.slice(0, 3).map(function(c){ var name=!c.label_quality&&/^(div|span|svg)(#|\[|\s)/i.test(c.target)?'Unverified element':c.target;return esc(name) + ' <strong>' + c.count + '</strong>'; }).join(' &middot; ') || '—') + '</div><button class="reset-eng" type="button" title="Clear click and session activity">Reset</button></div>'
-    + '</div>';
-
-  // Server-known data seeded inline (slim) so the client can skip the on-load /stats re-fetch
-  const refSig = ((referrers && referrers[0] && referrers[0].count) || 0) + '|' + (referrers ? referrers.length : 0);
-  const ccSig = ((countries && countries[0] && countries[0].count) || 0) + '|' + (countries ? countries.length : 0);
-  const dashSeed = JSON.stringify({
-    recent: visits.map(v => ({ id: v.id, created_at: v.created_at, city: v.city, region: v.region, country: v.country,
-      referrer: v.referrer, visitor_id: v.visitor_id, profile_id: v.profile_id, device_type: v.device_type, os: v.os, browser: v.browser,
-      isp: v.isp, postal_code: v.postal_code, latitude: v.latitude, longitude: v.longitude })),
-    clicks: (engagement && engagement.clickDetails) || [],
-    profiles: profiles.map(p => ({ id: p.id, visits: p.visits, members: p.members, cities: p.cities, countries: p.countries, devices: p.devices, oss: p.oss, browsers: p.browsers })),
-    identityRevision: identityEvents?.[0]?.id || '',
-    refSig: refSig, ccSig: ccSig
-  }).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
-
-  const recentRows = visits.map(v => {
-    const ago = timeAgo(v.created_at);
-    const recent = (Date.now() - new Date(v.created_at + 'Z').getTime()) < 3600000; // within last hour
-    const loc = [v.city, v.region, v.country].filter(Boolean).join(', ') || 'Unknown';
-    const os = esc(v.os || '');
-    const browser = esc(v.browser || '');
-    const dev = esc(v.device_type || '');
-    const vid = v.profile_id || v.visitor_id || '';
-    const rid = String(v.id == null ? '' : v.id);
-    return '<tr data-vid="' + esc(vid) + '"' + (recent ? ' class="new-visit"' : '') + '>'
-      + '<td class="sel-col"><input type="checkbox" class="chk row-chk" data-kind="visit" data-id="' + esc(rid) + '" aria-label="Select visit"></td>'
-      + '<td><div>' + formatTime(v.created_at) + '</div><div style="font-size:0.7rem;color:var(--muted)">' + ago + (recent ? ' <span class="badge-new">NEW</span>' : '') + '</div></td>'
-      + '<td>' + esc(loc) + coordH(v) + '</td>'
-      + '<td style="font-size:0.78rem">' + (dev ? '<span class="badge">' + dev + '</span> ' : '') + ' ' + esc([os, browser].filter(Boolean).join(' · ') || '—') + '</td>'
-      + '<td>' + (v.referrer
-        ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 30) + '</a>'
-        : 'Direct') + '</td>'
-      + '<td><span class="badge" title="Original ID: ' + esc(v.visitor_id || '') + '">' + esc(vid.slice(0, 8)) + '</span></td>'
-      + '<td class="act-col"><button type="button" class="row-del" data-kind="visit" data-id="' + esc(rid) + '" title="Delete this visit">🗑</button></td></tr>';
-  }).join('');
-  const countryChips = countries.length ? countries.map(c =>
-    '<span class="country-chip"><strong>' + c.count + '</strong> ' + flag(c.country) + ' ' + esc(c.country) + '</span>'
-  ).join('') : '';
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Site Activity | Shoaib Akthar</title>
-<meta name="robots" content="noindex, nofollow">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80' text-anchor='middle' x='50'%3E📊%3C/text%3E%3C/svg%3E">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self';">
-<style>
-  *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-  :root{--bg:#eef0f6;--text:#1d1d1f;--muted:#6e6e73;--dim:#1d1d1f;
-    --border:rgba(255,255,255,0.55);--border-soft:rgba(20,24,32,0.07);
-    --accent:#0071e3;--accent-soft:rgba(0,113,227,0.10);
-    --glass-bg:linear-gradient(150deg,rgba(255,255,255,0.85) 0%,rgba(255,255,255,0.45) 45%,rgba(255,255,255,0.18) 100%);
-    --glass-edge:linear-gradient(160deg,rgba(255,255,255,0.95) 0%,rgba(255,255,255,0.0) 30%,rgba(255,255,255,0.0) 75%,rgba(255,255,255,0.55) 100%);
-    --glass-inner:radial-gradient(120% 80% at 0% 0%,rgba(255,255,255,0.8) 0%,rgba(255,255,255,0.0) 50%);
-    --glass-shadow:0 22px 70px -10px rgba(0,80,180,0.18),0 4px 16px -4px rgba(20,24,32,0.08),inset 0 1px 0 rgba(255,255,255,0.85),inset 0 -1px 0 rgba(255,255,255,0.25),inset 0 0 1px 1px rgba(255,255,255,0.4);
-    --pill-shadow:0 2px 8px rgba(20,24,32,0.06),inset 0 1px 0 rgba(255,255,255,0.8),inset 0 -1px 0 rgba(0,0,0,0.04);
-    --specular:linear-gradient(115deg,rgba(255,255,255,0.7) 0%,rgba(255,255,255,0.12) 18%,transparent 40%,rgba(255,255,255,0.0) 60%,rgba(255,255,255,0.18) 82%,rgba(255,255,255,0.0) 100%);
-    --accent-shadow:0 8px 24px rgba(0,113,227,0.20);
-    --radius:28px;--radius-md:22px;--radius-sm:16px}
-  html[data-theme="dark"]{--bg:#0c0e14;--text:#f5f5f7;--muted:#a1a1a6;--dim:#e5e5ea;
-    --border:rgba(255,255,255,0.16);--border-soft:rgba(255,255,255,0.08);--accent:#2997ff;--accent-soft:rgba(41,151,255,0.18);
-    --glass-bg:linear-gradient(150deg,rgba(70,80,110,0.5) 0%,rgba(30,34,44,0.35) 50%,rgba(20,22,30,0.2) 100%);
-    --glass-edge:linear-gradient(160deg,rgba(180,200,255,0.25) 0%,rgba(255,255,255,0.0) 35%,rgba(255,255,255,0.0) 70%,rgba(180,200,255,0.18) 100%);
-    --glass-inner:radial-gradient(120% 80% at 0% 0%,rgba(160,180,255,0.25) 0%,rgba(255,255,255,0.0) 55%);
-    --glass-shadow:0 22px 70px -10px rgba(0,0,0,0.55),0 4px 16px -4px rgba(0,0,0,0.3),inset 0 1px 0 rgba(255,255,255,0.16),inset 0 -1px 0 rgba(0,0,0,0.4),inset 0 0 1px 1px rgba(255,255,255,0.08);
-    --pill-shadow:0 2px 8px rgba(0,0,0,0.4),inset 0 1px 0 rgba(255,255,255,0.16),inset 0 -1px 0 rgba(0,0,0,0.4);
-    --specular:linear-gradient(115deg,rgba(255,255,255,0.22) 0%,rgba(255,255,255,0.04) 18%,transparent 40%,transparent 60%,rgba(255,255,255,0.06) 82%,transparent 100%);
-    --accent-shadow:0 8px 24px rgba(41,151,255,0.25)}
-  body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Segoe UI',system-ui,sans-serif;
-    background:var(--bg);color:var(--text);padding:2rem 1.25rem;min-height:100vh;
-    transition:background 0.4s,color 0.4s;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-  body::before,body::after,body>.aurora-layer{content:'';position:fixed;inset:-30%;z-index:-2;pointer-events:none}
-  body::before{
-    background:
-      radial-gradient(750px 550px at 10% 5%,rgba(99,157,255,0.55) 0%,rgba(99,157,255,0.18) 30%,transparent 55%),
-      radial-gradient(850px 600px at 88% 8%,rgba(167,119,255,0.5) 0%,rgba(167,119,255,0.15) 30%,transparent 52%),
-      radial-gradient(950px 650px at 45% 92%,rgba(56,217,169,0.45) 0%,rgba(56,217,169,0.12) 30%,transparent 50%),
-      radial-gradient(650px 480px at 25% 55%,rgba(255,138,199,0.4) 0%,rgba(255,138,199,0.1) 30%,transparent 48%),
-      linear-gradient(160deg,#f0f4ff 0%,#eef0fa 100%);
-    animation:none;filter:blur(30px)}
-  body::after{
-    background:radial-gradient(55% 35% at 50% 0%,rgba(255,255,255,0.7) 0%,transparent 65%);
-    animation:none;mix-blend-mode:overlay;filter:none}
-  body>.aurora-layer{
-    background:
-      radial-gradient(500px 400px at 70% 30%,rgba(120,180,255,0.35) 0%,transparent 60%),
-      radial-gradient(450px 380px at 15% 75%,rgba(180,140,255,0.3) 0%,transparent 55%);
-    animation:none;mix-blend-mode:screen;filter:blur(40px)}
-  html[data-theme="dark"] body>.aurora-layer{
-    background:
-      radial-gradient(500px 400px at 70% 30%,rgba(60,120,220,0.3) 0%,transparent 60%),
-      radial-gradient(450px 380px at 15% 75%,rgba(120,80,200,0.25) 0%,transparent 55%);
-    mix-blend-mode:screen}
-  html[data-theme="dark"] body::before{
-    background:
-      radial-gradient(750px 550px at 10% 5%,rgba(40,100,220,0.4) 0%,rgba(40,100,220,0.12) 30%,transparent 55%),
-      radial-gradient(850px 600px at 88% 8%,rgba(110,60,220,0.38) 0%,rgba(110,60,220,0.1) 30%,transparent 52%),
-      radial-gradient(950px 650px at 45% 92%,rgba(20,160,100,0.32) 0%,rgba(20,160,100,0.08) 30%,transparent 50%),
-      radial-gradient(650px 480px at 25% 55%,rgba(200,50,120,0.28) 0%,rgba(200,50,120,0.08) 30%,transparent 48%),
-      linear-gradient(160deg,#0a0d16 0%,#0c0f1a 100%)}
-  html[data-theme="dark"] body::after{background:radial-gradient(55% 35% at 50% 0%,rgba(100,150,255,0.18) 0%,transparent 65%);mix-blend-mode:screen}
-  @keyframes aurora{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(-3%,2%,0) scale(1.04)}}
-  @keyframes aurora-glow{0%{opacity:0.5;transform:translate3d(0,0,0)}100%{opacity:0.9;transform:translate3d(2%,-2%,0)}}
-  @keyframes aurora-2{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(2%,-3%,0) scale(1.06)}}
-  @keyframes glass-morph{0%{border-radius:var(--radius)}50%{border-radius:calc(var(--radius) + 4px)}100%{border-radius:var(--radius)}}
-  @keyframes fadeInUp{0%{opacity:0;transform:translateY(8px) scale(0.998)}50%{opacity:1}100%{opacity:1;transform:translateY(0) scale(1)}}
-  .stat-card>*,.card>*,.top-bar>*{position:relative;z-index:1}
-  .stat-card::after,.card::after,.top-bar::after{z-index:0}
-  .container{max-width:1000px;margin:0 auto}
-  .top-bar{position:sticky;top:0.75rem;z-index:20;display:flex;justify-content:space-between;align-items:center;
-    flex-wrap:wrap;gap:1rem;padding:1.15rem 1.5rem;margin-bottom:1.75rem;border-radius:var(--radius);overflow:hidden;
-    background:var(--glass-bg);backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%);
-    border:1px solid var(--border);box-shadow:var(--glass-shadow)}
-  .top-bar::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
-  .top-bar::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.6}
-  h1{font-size:2rem;font-weight:700;letter-spacing:-0.025em;line-height:1.1;
-    background:linear-gradient(115deg,var(--text) 35%,var(--muted));
-    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-  .subtitle{color:var(--muted);margin-top:0.3rem;font-size:0.9rem}
-  .top-actions{display:flex;align-items:center;gap:0.5rem}
-  .theme-toggle,.logout{background:var(--glass-bg);color:var(--text);font-size:0.8rem;text-decoration:none;
-    padding:0.45rem 1.1rem;border-radius:980px;border:1px solid var(--border);cursor:pointer;font-family:inherit;
-    font-weight:600;letter-spacing:0.01em;transition:transform 0.25s cubic-bezier(.22,.61,.36,1),color 0.2s,border-color 0.2s,box-shadow 0.2s;
-    box-shadow:var(--pill-shadow);backdrop-filter:blur(16px) saturate(180%);-webkit-backdrop-filter:blur(16px) saturate(180%)}
-  .theme-toggle:hover,.logout:hover{color:var(--accent);border-color:var(--accent);transform:translateY(-1px);box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.9)}
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1.5rem}
-  .stat-card{position:relative;overflow:hidden;background:var(--glass-bg);padding:1.4rem 1.5rem;border-radius:var(--radius);
-    box-shadow:var(--glass-shadow);border:1px solid var(--border);
-    backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%);
-    transition:transform 0.3s cubic-bezier(.22,.61,.36,1),box-shadow 0.3s;    animation:fadeInUp 0.3s cubic-bezier(.22,.61,.36,1) both}
-  .stat-card::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.7}
-  .stat-card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
-  .stat-card:hover{transform:translateY(-4px);box-shadow:0 28px 70px -12px rgba(0,80,180,0.22),0 6px 20px -6px rgba(20,24,32,0.1),inset 0 1px 0 rgba(255,255,255,0.9)}
-  html[data-theme="dark"] .stat-card:hover{box-shadow:0 28px 70px -10px rgba(0,0,0,0.6),inset 0 0 20px rgba(41,151,255,0.08),inset 0 1px 0 rgba(255,255,255,0.18)}
-  .stat-icon{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;
-    background:var(--accent-soft);color:var(--accent);margin-bottom:0.9rem}
-  .stat-icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-  .stat-value{font-size:2.2rem;font-weight:700;letter-spacing:-0.03em;color:var(--text);font-variant-numeric:tabular-nums}
-  .stat-label{font-size:0.7rem;color:var(--dim);text-transform:uppercase;letter-spacing:0.08em;margin-top:0.3rem;font-weight:700}
-  .grid-2{display:grid;grid-template-columns:1.4fr 1fr;gap:1rem;margin-bottom:1.5rem}
-  @media(max-width:768px){.grid-2{grid-template-columns:1fr}}
-  .card{position:relative;overflow:hidden;background:var(--glass-bg);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--glass-shadow);
-    margin-bottom:1.5rem;border:1px solid var(--border);
-    backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%)}
-  .card, .profile-card{content-visibility:auto;contain-intrinsic-size:auto 320px}
-  .card::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--glass-inner);opacity:0.7}
-  .card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:var(--specular);mix-blend-mode:screen}
-  html[data-theme="dark"] .card{background:var(--glass-bg)}
-  h2{font-size:1.05rem;font-weight:700;margin-bottom:1rem;letter-spacing:-0.012em}
-  .card-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap}
-  .card-head h2{margin-bottom:0}
-  .trend-wrap{position:relative;padding-top:0.5rem}
-  svg.trend{width:100%;height:60px;display:block}
-  .trend-poly{fill:rgba(0,113,227,0.10);stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
-  html[data-theme="dark"] .trend-poly{fill:rgba(41,151,255,0.12)}
-  .trend-date{font-size:0.7rem;color:var(--muted);display:flex;justify-content:space-between;margin-top:0.5rem}
-  .ref-item{display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid var(--border-soft)}
-  .ref-item:last-child{border-bottom:none}
-  .ref-name{font-size:0.85rem;font-weight:500;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:0.01em}
-  .ref-bar{flex:1;margin:0 1rem;height:6px;background:rgba(0,0,0,0.06);border-radius:3px;overflow:hidden}
-  html[data-theme="dark"] .ref-bar{background:rgba(255,255,255,0.08)}
-  .ref-fill{height:100%;background:linear-gradient(90deg,var(--accent),#5ac8fa);border-radius:3px;transition:width 0.4s ease}
-  .ref-count{font-size:0.8rem;color:var(--muted);font-weight:700;min-width:2.5rem;text-align:right;font-variant-numeric:tabular-nums}
-  .country-list{display:flex;flex-wrap:wrap;gap:0.5rem}
-  .country-chip{background:var(--glass-bg);padding:0.5rem 1rem;border-radius:20px;font-size:0.85rem;box-shadow:var(--pill-shadow);
-    border:1px solid var(--border);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);font-weight:500}
-  .country-chip strong{color:var(--accent);font-weight:700}
-  .table-wrap{background:var(--glass-bg);border-radius:var(--radius);overflow:hidden;box-shadow:var(--glass-shadow);border:1px solid var(--border);
-    backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%)}
-  table{width:100%;border-collapse:collapse;border-radius:var(--radius)}
-  th,td{padding:11px 14px;text-align:left;font-size:0.82rem;white-space:nowrap;letter-spacing:0.01em}
-  th{background:rgba(0,113,227,0.06);font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:0.05em;font-size:0.68rem}
-  html[data-theme="dark"] th{background:rgba(41,151,255,0.10)}
-  td{border-bottom:1px solid var(--border-soft);font-weight:500;font-variant-numeric:tabular-nums}
-  tr:last-child td{border-bottom:none}
-  tr:hover td{background:rgba(0,113,227,0.05)}
-  html[data-theme="dark"] tr:hover td{background:rgba(41,151,255,0.08)}
-  .badge{display:inline-block;padding:3px 9px;border-radius:8px;font-size:0.68rem;font-weight:700;letter-spacing:0.02em;background:rgba(46,125,50,0.12);color:#2e7d32}
-  html[data-theme="dark"] .badge{background:rgba(129,199,132,0.16);color:#81c784}
-  .badge-new{display:inline-block;padding:2px 6px;border-radius:6px;font-size:0.6rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;background:rgba(46,125,50,0.18);color:#2e7d32;margin-left:6px;animation:pulse-new 2s ease-in-out infinite}
-  @keyframes pulse-new{0%,100%{opacity:1}50%{opacity:0.5}}
-  .new-visit td{background:rgba(46,125,50,0.04)}
-  html[data-theme="dark"] .new-visit td{background:rgba(76,175,80,0.06)}
-  .profile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem;margin-top:0.5rem}
-  .profile-card{position:relative;background:linear-gradient(150deg,rgba(255,255,255,0.6),rgba(255,255,255,0.25));border:1px solid var(--border);border-radius:var(--radius-md);padding:1.1rem;box-shadow:inset 0 1px 0 rgba(255,255,255,0.6);transition:transform 0.2s,box-shadow 0.2s}
-  .profile-card:hover{transform:translateY(-2px);box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 8px 24px rgba(0,80,180,0.12)}
-  .profile-head{display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem}
-  .profile-icon{font-size:1.3rem;flex-shrink:0}
-  .profile-name{font-size:0.82rem;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .prob{font-size:0.6rem;padding:2px 6px;border-radius:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.03em}
-  .prob-high{background:rgba(46,125,50,0.15);color:#2e7d32}
-  .prob-med{background:rgba(245,124,0,0.15);color:#e65100}
-  .prob-low{background:rgba(117,117,117,0.15);color:#616161}
-  .profile-visits{font-size:1.4rem;font-weight:700;color:var(--text);margin-bottom:0.3rem}
-  .profile-visits strong{font-variant-numeric:tabular-nums}
-  .profile-loc{font-size:0.78rem;color:var(--accent);margin-bottom:0.4rem}
-  .profile-meta{font-size:0.68rem;color:var(--muted);line-height:1.5;word-break:break-word}
-  .profile-meta br{content:'';display:block;margin-top:2px}
-  .profile-actions{display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:0.7rem}
-  .profile-merge{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
-  .profile-merge:hover{border-color:var(--accent);color:var(--accent);background:rgba(0,113,227,0.08)}
-  .profile-review{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--accent);background:var(--accent-soft);cursor:pointer;font-weight:700;color:var(--accent)}
-  .profile-review:hover{filter:brightness(.9)}
-  .prob-review{background:rgba(245,158,11,.16);color:#995000}
-  html[data-theme="dark"] .prob-review{color:#ffd18a}
-  html[data-theme="dark"] .profile-card{background:linear-gradient(150deg,rgba(50,58,78,0.5),rgba(28,31,38,0.35))}
-  html[data-theme="dark"] .profile-merge{background:rgba(255,255,255,0.06)}
-  .favorite-btn{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
-  .favorite-btn:hover{border-color:#f59e0b;color:#b45309;background:rgba(245,158,11,0.1)}
-  .reset-eng{align-self:flex-start;margin-top:0.5rem;font-size:0.66rem;padding:3px 10px;border-radius:8px;border:1px solid rgba(211,47,47,0.4);background:rgba(211,47,47,0.06);cursor:pointer;font-weight:600;letter-spacing:0.03em;color:#c62828;transition:all 0.15s}
-  .reset-eng:hover{background:rgba(211,47,47,0.12);border-color:#c62828}
-  html[data-theme="dark"] .reset-eng{color:#ef9a9a;border-color:rgba(239,154,154,0.4);background:rgba(211,47,47,0.15)}
-  html[data-theme="dark"] .reset-eng:hover{background:rgba(211,47,47,0.25)}
-  /* Delete controls */
-  .sel-col{width:34px;text-align:center}
-  .act-col{width:44px;text-align:center}
-  .chk{width:16px;height:16px;cursor:pointer;accent-color:var(--accent);vertical-align:middle}
-  .row-del{background:none;border:1px solid transparent;border-radius:8px;cursor:pointer;font-size:0.9rem;line-height:1;padding:4px 7px;color:var(--muted);transition:all 0.15s}
-  .row-del:hover{color:#c62828;border-color:rgba(211,47,47,0.4);background:rgba(211,47,47,0.08)}
-  html[data-theme="dark"] .row-del:hover{color:#ef9a9a;border-color:rgba(239,154,154,0.4);background:rgba(211,47,47,0.16)}
-  .row-del[disabled]{opacity:0.5;cursor:default}
-  .bulkbar{display:flex;align-items:center;gap:0.75rem;margin-bottom:0.85rem;padding:0.55rem 0.9rem;border-radius:var(--radius-sm);
-    background:var(--accent-soft);border:1px solid var(--border);font-size:0.8rem;font-weight:600}
-  .bulkbar[hidden]{display:none}
-  .bulkbar .spacer{flex:1}
-  .danger-btn{font-size:0.72rem;padding:5px 12px;border-radius:8px;border:1px solid rgba(211,47,47,0.5);background:rgba(211,47,47,0.08);
-    color:#c62828;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:0.02em;transition:all 0.15s}
-  .danger-btn:hover{background:rgba(211,47,47,0.16);border-color:#c62828}
-  html[data-theme="dark"] .danger-btn{color:#ef9a9a;border-color:rgba(239,154,154,0.45);background:rgba(211,47,47,0.18)}
-  html[data-theme="dark"] .danger-btn:hover{background:rgba(211,47,47,0.3)}
-  .danger-btn[disabled]{opacity:0.55;cursor:default;transform:none}
-  .ghost-btn{font-size:0.72rem;padding:5px 12px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text);
-    cursor:pointer;font-family:inherit;font-weight:600;transition:all 0.15s}
-  .ghost-btn:hover{border-color:var(--accent);color:var(--accent)}
-  .danger-zone{border:1px solid rgba(211,47,47,0.35)!important;margin-top:1.5rem}
-  html[data-theme="dark"] .danger-zone{border-color:rgba(239,154,154,0.35)!important}
-  .danger-zone h2{color:#c62828}
-  html[data-theme="dark"] .danger-zone h2{color:#ef9a9a}
-  .danger-zone p{font-size:0.8rem;color:var(--muted);margin-bottom:1rem;line-height:1.5}
-  .danger-actions{display:flex;flex-wrap:wrap;gap:0.6rem}
-  .profile-delete{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
-  .profile-delete:hover{border-color:#c62828;color:#c62828;background:rgba(211,47,47,0.08)}
-  html[data-theme="dark"] .profile-delete{background:rgba(255,255,255,0.06)}
-  html[data-theme="dark"] .profile-delete:hover{color:#ef9a9a;border-color:#ef9a9a;background:rgba(211,47,47,0.16)}
-  .profile-card.is-favorite{border:2px solid #f59e0b;box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 0 24px rgba(245,158,11,0.15),0 8px 32px rgba(0,0,0,0.08)}
-  .profile-card.is-favorite .favorite-btn{background:rgba(245,158,11,0.15);color:#b45309;border-color:#f59e0b}
-  html[data-theme="dark"] .profile-card.is-favorite{border-color:#fbbf24;box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 0 24px rgba(251,191,36,0.18)}
-  html[data-theme="dark"] .profile-card.is-favorite .favorite-btn{background:rgba(251,191,36,0.2);color:#fde68a;border-color:#fbbf24}
-  .favorite-alert{display:flex;align-items:center;gap:0.6rem;margin:0 0 1rem;padding:0.75rem 1rem;border-radius:var(--radius-sm);
-    background:linear-gradient(150deg,rgba(245,158,11,0.16),rgba(251,191,36,0.08));border:1px solid rgba(245,158,11,0.5);
-    box-shadow:0 0 24px rgba(245,158,11,0.18),inset 0 1px 0 rgba(255,255,255,0.4);
-    backdrop-filter:blur(30px) saturate(200%);-webkit-backdrop-filter:blur(30px) saturate(200%);
-    font-size:0.85rem;font-weight:600;color:#92400e;animation:pulse-new 3s ease-in-out infinite}
-  html[data-theme="dark"] .favorite-alert{color:#fde68a;background:linear-gradient(150deg,rgba(251,191,36,0.18),rgba(251,191,36,0.06))}
-  .favorite-alert[hidden]{display:none}
-  tr.favorite-visit td{background:rgba(245,158,11,0.06)}
-  html[data-theme="dark"] tr.favorite-visit td{background:rgba(251,191,36,0.08)}
-  .favorite-section h2::after{content:' ★ Saved';font-size:0.7rem;color:#f59e0b;font-weight:600;vertical-align:middle}
-  html[data-theme="dark"] .favorite-section h2::after{color:#fbbf24}
-  html[data-theme="dark"] .prob-high{background:rgba(76,175,80,0.2);color:#81c784}
-  html[data-theme="dark"] .prob-med{background:rgba(255,152,0,0.2);color:#ffb74d}
-  html[data-theme="dark"] .prob-low{background:rgba(158,158,158,0.2);color:#bdbdbd}
-  .table-scroll-x{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--radius)}
-  .click-action{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;max-width:300px;white-space:normal;line-height:1.35}
-  .click-action strong{font-size:.79rem;font-weight:750;color:var(--text)}
-  .click-action small{flex-basis:100%;font-size:.68rem;color:var(--muted);font-family:ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}
-  .click-quality{display:inline-flex;align-items:center;border:1px solid var(--border-soft);border-radius:999px;padding:.13rem .42rem;font-size:.62rem;font-weight:750;white-space:nowrap;background:var(--accent-soft);color:var(--accent)}
-  .click-quality-inferred{background:rgba(245,158,11,.1);color:#9a5900;border-color:rgba(245,158,11,.25)}
-  .click-quality-unknown,.click-quality-legacy{background:rgba(120,125,135,.12);color:var(--muted)}
-  html[data-theme="dark"] .click-quality-inferred{color:#ffd18a}
-  .click-destination{font-size:.72rem;color:var(--accent);text-decoration:none;overflow-wrap:anywhere;white-space:normal}
-  .click-destination:hover{text-decoration:underline}
-  #clickTbody td:last-child small{display:block;font-size:.66rem;color:var(--muted);margin-top:.15rem}
-  .click-explainer{font-size:.74rem;line-height:1.5;color:var(--muted);margin:.25rem 0 1rem}
-  .table-scroll-y{max-height:520px;width:100%;overflow-y:auto;-webkit-overflow-scrolling:touch}
-  .table-scroll-y table{box-shadow:none;border-radius:0}
-  .table-scroll-y thead th{position:sticky;top:0;z-index:1}
-  .empty-state{color:var(--muted);font-size:0.85rem;text-align:center;padding:2rem 0}
-  .auto-refresh{display:flex;align-items:center;gap:0.4rem;font-size:0.75rem;color:var(--muted);margin-top:1.5rem;text-align:center;justify-content:center}
-  .dot{width:8px;height:8px;border-radius:50%;background:#34c759;display:inline-block;animation:pulse 2s infinite;box-shadow:0 0 0 4px rgba(52,199,89,0.15)}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
-  .search-wrap{position:relative;min-width:220px}
-  .search-wrap input{width:100%;padding:0.5rem 0.9rem 0.5rem 2rem;border:1px solid var(--border);border-radius:var(--radius-sm);
-    background:var(--glass-bg);color:var(--text);font-size:0.82rem;font-family:inherit;font-weight:500;outline:none;
-    transition:border-color 0.2s,box-shadow 0.2s;
-    backdrop-filter:blur(30px) saturate(200%);-webkit-backdrop-filter:blur(30px) saturate(200%);
-    box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 2px 8px rgba(20,24,32,0.05)}
-  html[data-theme="dark"] .search-wrap input{background:var(--glass-bg)}
-  .search-wrap input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.7)}
-  .search-wrap input::placeholder{color:var(--muted)}
-  .search-icon{position:absolute;left:0.65rem;top:50%;transform:translateY(-50%);width:14px;height:14px;
-    stroke:var(--muted);fill:none;stroke-width:2;stroke-linecap:round;pointer-events:none}
-  .identity-intro{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:1.2rem}
-  .identity-intro p,.identity-note{font-size:0.78rem;color:var(--muted);line-height:1.5}
-  .identity-kicker{font-size:0.68rem;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:var(--accent);margin-bottom:0.25rem}
-  .identity-members{display:flex;flex-wrap:wrap;align-items:center;gap:0.35rem;margin-top:0.75rem}
-  .identity-chip{display:inline-flex;align-items:center;gap:0.25rem;padding:0.22rem 0.4rem;border:1px solid var(--border-soft);border-radius:8px;background:var(--accent-soft);font-size:0.68rem;font-family:ui-monospace,SFMono-Regular,monospace;color:var(--text)}
-  .identity-chip button{border:0;background:none;color:var(--accent);cursor:pointer;font:inherit;font-weight:800;padding:0 0.1rem}
-  .identity-chip button:hover{text-decoration:underline}
-  .identity-history{margin-top:1.2rem;padding-top:1rem;border-top:1px solid var(--border-soft)}
-  .identity-history h3{font-size:0.85rem;margin-bottom:0.55rem}
-  .identity-history ul{list-style:none;display:grid;gap:0.4rem}
-  .identity-history li{font-size:0.73rem;color:var(--muted);line-height:1.45}
-  .identity-dialog{width:min(92vw,530px);max-height:85vh;overflow:auto;margin:auto;padding:1.4rem;border:1px solid var(--border);border-radius:22px;background:var(--bg);color:var(--text);box-shadow:0 30px 90px rgba(0,0,0,.35);font-family:inherit}
-  .identity-dialog::backdrop{background:rgba(10,15,30,.65);backdrop-filter:blur(4px)}
-  .location-meta{display:flex;align-items:center;gap:.45rem;margin-top:.25rem;color:var(--muted);font-size:.68rem;white-space:normal}
-  .area-map-link{border:1px solid var(--border-soft);border-radius:999px;padding:.18rem .55rem;background:var(--accent-soft);color:var(--accent);font:inherit;font-size:.67rem;font-weight:700;text-decoration:none;white-space:nowrap}
-  .area-map-link:hover{border-color:var(--accent);background:var(--accent-soft)}
-  .area-map-link:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
-  .map-unavailable{font-size:.66rem;color:var(--muted)}
-  .identity-dialog h2{font-size:1.2rem;margin-bottom:0.5rem}
-  .identity-dialog p{font-size:0.8rem;line-height:1.55;color:var(--muted)}
-  .identity-dialog label{display:block;font-size:0.77rem;font-weight:700;margin:1rem 0 0.35rem}
-  .identity-dialog select{width:100%;padding:0.75rem;border:1px solid var(--border-soft);border-radius:11px;background:var(--glass-bg);color:var(--text);font:inherit}
-  .identity-review{display:grid;grid-template-columns:1fr 1fr;gap:0.7rem;margin-top:1rem}
-  .identity-review>div{padding:0.8rem;border:1px solid var(--border-soft);border-radius:12px;background:var(--accent-soft);min-width:0}
-  .identity-review>div:first-child{border-color:rgba(52,199,89,.45);background:rgba(52,199,89,.10)}
-  .identity-review strong{display:block;font-size:0.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.4rem}
-  .identity-review span{font-size:.78rem;line-height:1.5;overflow-wrap:anywhere}
-  .identity-dialog-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1.2rem}
-  .identity-dialog-actions button{border:1px solid var(--border-soft);border-radius:10px;padding:.65rem 1rem;font:inherit;font-size:.8rem;font-weight:700;cursor:pointer;background:var(--glass-bg);color:var(--text)}
-  .identity-dialog-actions .identity-confirm{background:var(--accent);border-color:var(--accent);color:white}
-  .identity-dialog-actions button:disabled{opacity:.55;cursor:wait}
-  .identity-error{color:#c62828!important;margin-top:.65rem}
-  .identity-error[hidden]{display:none}
-  html[data-theme="dark"] .identity-error{color:#ff9c9c!important}
-  .identity-review span{display:block;white-space:pre-line}
-  .identity-signal{margin-top:.85rem;padding:.7rem .85rem;border:1px solid var(--border-soft);border-radius:10px;background:var(--accent-soft);font-size:.78rem;line-height:1.5}
-  .identity-signal.identity-warning{border-color:rgba(245,158,11,.55);background:rgba(245,158,11,.12);color:#8a4b00}
-  html[data-theme="dark"] .identity-signal.identity-warning{color:#ffd18a}
-  #identityOutcome{margin-top:.7rem}
-  .identity-check{display:flex;align-items:flex-start;gap:.55rem;margin-top:1rem;font-size:.8rem;line-height:1.4;cursor:pointer}
-  .identity-check input{width:1rem;height:1rem;margin-top:.08rem;accent-color:var(--accent);flex:none}
-  .identity-signal[hidden],.identity-note[hidden],.identity-check[hidden]{display:none}
-  .visit-list{display:grid;gap:.55rem;max-height:45vh;overflow:auto;margin-top:1rem}
-  .visit-item{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.8rem;border:1px solid var(--border-soft);border-radius:12px;background:var(--accent-soft)}
-  .visit-item strong{display:block;font-size:.8rem}
-  .visit-item small{display:block;font-size:.7rem;color:var(--muted);line-height:1.5}
-  .visit-item button{flex:none;border:1px solid var(--accent);border-radius:9px;background:var(--bg);color:var(--accent);padding:.4rem .6rem;cursor:pointer;font-size:.72rem;font-weight:700}
-  .visit-editor{margin-top:1rem;padding:1rem;border:1px solid var(--accent);border-radius:14px;background:var(--accent-soft)}
-  .visit-editor[hidden]{display:none}
-  .visit-editor .identity-dialog-actions{margin-top:.75rem}
-  @media(max-width:600px){body{padding:1rem}.top-bar{top:0.5rem}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:1rem}.identity-review{grid-template-columns:1fr}}
-  @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
-</style>
-</head>
+  return `${pageHead('Dashboard', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'")}
 <body>
-<div class="aurora-layer" aria-hidden="true"></div>
-<div class="container">
-  <div class="favorite-alert" id="favoriteAlert" hidden></div>
-  <div class="top-bar">
-    <div>
-      <h1>Site Activity</h1>
-      <p class="subtitle">A private view of visits and page interactions.</p>
+<a class="sr-only skip-link button" href="#dashboardMain">Skip to content</a>
+<header class="masthead"><div class="masthead-inner shell">
+  ${BRAND}
+  <div class="top-actions">${THEME_TOGGLE}<form method="POST" action="/logout"><button type="submit">Sign out</button></form></div>
+</div></header>
+<div class="nav-shell"><nav class="navigation shell" aria-label="Dashboard" id="dashboardNav">
+  <a href="#overview" aria-current="page">Overview</a>
+  <a href="#visits">Visits</a>
+  <a href="#interactions">Interactions</a>
+  <a href="#profiles">Profiles</a>
+  <a href="#settings">Settings</a>
+</nav></div>
+<main class="shell" id="dashboardMain" tabindex="-1">
+  <noscript><style>#visits[hidden]{display:block!important}.overview-grid,.nav-shell,.log-tools,.search-wrap,.refresh-group{display:none!important}</style><p class="card">Enable JavaScript to use the dashboard filters, activity charts and profile tools.</p></noscript>
+  <section id="overview" data-view aria-labelledby="overviewTitle">
+    <header class="section-head">
+      <div><p class="eyebrow">shoaibakthar.pro</p><h1 id="overviewTitle" tabindex="-1">Traffic overview</h1></div>
+      <div class="refresh-group"><span class="refresh-status" id="refreshStatus" role="status">Updates every minute</span><button type="button" id="refreshButton">Refresh</button></div>
+    </header>
+    <div class="favorite-alert" id="favoriteAlert" hidden></div>
+    <dl class="metrics">
+      ${metric('statToday', 'Views today', number.format(totals.today), 'Since midnight UTC')}
+      ${metric('stat24h', 'Views in 24 hours', number.format(totals.last24h), 'Rolling window')}
+      ${metric('statTotal', 'Total views', number.format(totals.total), 'All recorded visits')}
+      ${metric('statUnique', 'Visitor profiles', number.format(totals.unique), 'Distinct profiles')}
+    </dl>
+    <div class="overview-grid">
+      <section class="card plot-card" aria-labelledby="chartTitle">
+        <header class="card-head">
+          <div><p class="eyebrow">Daily views · UTC</p><h2 id="chartTitle">Traffic over time</h2></div>
+          <div class="periods" role="group" aria-label="Chart date range">
+            <button type="button" data-days="7" aria-label="Last 7 days" aria-pressed="false">7D</button>
+            <button type="button" data-days="30" aria-label="Last 30 days" aria-pressed="true">30D</button>
+          </div>
+        </header>
+        <div class="plot-summary"><strong class="plot-total" id="plotTotal">0</strong><span id="plotSummary">views in 30 days</span></div>
+        <div class="plot-chart">
+          <div class="plot-axis" id="plotAxis" aria-hidden="true"></div>
+          <div class="plot-bars" id="plotBars" role="group" aria-label="Daily views. Use the arrow keys to browse dates."></div>
+          <div class="plot-dates" id="plotDates" aria-hidden="true"></div>
+        </div>
+        <p class="plot-detail" id="plotDetail"></p>
+      </section>
+      <section class="card" aria-labelledby="sourcesTitle">
+        <header class="card-head"><div><h2 id="sourcesTitle">Traffic sources</h2><p class="muted">From the latest 200 visits</p></div></header>
+        <ol class="rank-list" role="list" id="refList"></ol>
+      </section>
     </div>
-    <div class="top-actions">
-      <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" type="button">Dark</button>
-      <form method="POST" action="/logout" style="display:inline;margin:0"><button type="submit" class="logout" title="Session expires after 1 hour">Logout</button></form>
+    <div class="overview-grid">
+      <section class="card" aria-labelledby="latestTitle">
+        <header class="card-head"><h2 id="latestTitle">Latest visits</h2><a class="button" href="#visits">All visits <span aria-hidden="true">↗</span></a></header>
+        <ul class="compact-visits" role="list" id="latestVisits"></ul>
+      </section>
+      <section class="card overview-country" aria-labelledby="countriesTitle">
+        <header class="card-head"><div><h2 id="countriesTitle">Top countries</h2><p class="muted">Estimated from IP addresses</p></div></header>
+        <ol class="rank-list" role="list" id="countryList"></ol>
+      </section>
     </div>
-  </div>
-  <div class="stats">
-    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div class="stat-value" id="statToday">${totals.today}</div><div class="stat-label">Today</div></div>
-    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="stat-value" id="stat24h">${totals.last24h}</div><div class="stat-label">Last 24 Hours</div></div>
-    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="stat-value" id="statTotal">${totals.total}</div><div class="stat-label">Total Views</div></div>
-    <div class="stat-card"><div class="stat-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg></div><div class="stat-value" id="statUnique">${totals.unique}</div><div class="stat-label">Visitor profiles</div></div>
-  </div>
-  ${engagementHtml}
+  </section>
 
-  <div class="card" style="margin-bottom:1.5rem">
-    <div class="card-head">
-      <h2>Click Details</h2>
-      <span style="font-size:0.72rem;color:var(--muted)">Latest 60 interactions &middot; saved profiles are highlighted</span>
-    </div>
-    <p class="click-explainer">Named controls are identified by the site. Inferred controls use browser semantics. Unidentified and earlier interactions are not guesses; positions are viewport coordinates, not proof of a button.</p>
-    <div class="bulkbar" id="clickBulk" hidden>
-      <span><strong id="clickSelCount">0</strong>&nbsp;selected</span>
-      <span class="spacer"></span>
-      <button type="button" class="ghost-btn" id="clickClearSel">Clear</button>
-      <button type="button" class="danger-btn" id="clickBulkDelete">Delete selected</button>
-    </div>
-    <div class="table-scroll-x">
-      <table>
-        <thead><tr><th class="sel-col"><input type="checkbox" class="chk" id="clickAll" aria-label="Select all interactions"></th><th>Time (CST)</th><th>Visitor</th><th>Location</th><th>Section</th><th>Interaction</th><th>Destination</th><th>Viewport position</th><th class="act-col"></th></tr></thead>
-        <tbody id="clickTbody"><tr><td colspan="9" class="empty-state">Loading…</td></tr></tbody>
-      </table>
-    </div>
-  </div>
+  <section id="visits" data-view aria-labelledby="visitsTitle" hidden>
+    <header class="section-head"><div><h1 id="visitsTitle" tabindex="-1">Visits</h1><p class="muted">The latest 100 visits, newest first</p></div></header>
+    <section class="card table-card" aria-labelledby="visitLogTitle">
+      <header class="card-head"><h2 id="visitLogTitle">Recent visits</h2>
+        <div class="search-wrap"><input type="search" id="recentSearch" placeholder="Search visits…" aria-label="Search visits" autocomplete="off"></div>
+      </header>
+      ${logTable('recent', ['Time (Central)', 'Approx. area', 'Device', 'Source', 'Profile'], recentRows)}
+    </section>
+  </section>
 
-  ${profiles && profiles.length ? '<div class="card" style="margin-bottom:1.5rem" id="identityStudio"><div class="identity-intro"><div><div class="identity-kicker">Identity studio</div><h2>Visitor Profiles</h2><p>Review the visits inside a profile to correct an old mix-up. Combine profiles only when they belong to the same person; linked IDs can be unlinked later.</p></div></div><div class="profile-grid favorite-section" id="profileGrid">' + profiles.map(function(p,i){
-    var os = (p.oss && p.oss[0]) || '';
-    var browser = (p.browsers && p.browsers[0]) || '';
-    var rawUA = (p.uas && p.uas[0]) || '';
-    // Fallback: extract from raw UA if parsed fields are empty (old data)
-    if (!os && rawUA){
-      if (/iPhone|iPad/i.test(rawUA)) os='iOS';
-      else if (/Android/i.test(rawUA)) os='Android';
-      else if (/Mac OS X/i.test(rawUA)) os='macOS';
-      else if (/Windows/i.test(rawUA)) os='Windows';
-    }
-    if (!browser && rawUA){
-      if (/Edg\//i.test(rawUA)) browser='Edge';
-      else if (/Chrome\//i.test(rawUA)) browser='Chrome';
-      else if (/Firefox\//i.test(rawUA)) browser='Firefox';
-      else if (/Safari\//i.test(rawUA)) browser='Safari';
-    }
-    var devIcon = os && /macos|windows/i.test(os) ? '💻' : '📱';
-    // Friendly name: "Android · Chrome · Seattle"
-    var label=[];
-    if (os) label.push(os);
-    if (browser) label.push(browser);
-    var primaryCity = p.cities[0] || '';
-    if (primaryCity) label.push(primaryCity);
-    var mixed = p.oss.length > 1 && p.countries.length > 1;
-    var visitorName = mixed ? 'Mixed device signals' : label.length>0 ? label.join(' · ') : 'Device '+(i+1);
-    if (visitorName.length>35) visitorName=visitorName.slice(0,33)+'…';
-    var span = p.firstSeen && p.lastSeen ? (new Date(p.lastSeen+'Z').getTime()-new Date(p.firstSeen+'Z').getTime())/(86400000) : 0;
-    var prob = mixed ? 'Review' : p.visits>=6 ? 'Regular' : p.visits>=3 ? (span>7 ? 'Frequent' : 'Returning') : 'New';
-    var probClass = mixed ? 'review' : p.visits>=6 ? 'high' : p.visits>=3 ? 'med' : 'low';
-    var ispList = p.isps && p.isps.filter(Boolean).join(', ') || '';
-    var ipList = p.ipHashes && p.ipHashes.filter(Boolean).map(function(h){return h.slice(0,8)}).join(', ') || '';
-    var citiesStr = p.cities.slice(0,3).join(', ') + (p.cities.length>3 ? ' +'+(p.cities.length-3) : '');
-    var times = p.timezones && p.timezones.filter(Boolean).join(', ') || '';
-    var members = p.members.length > 1 ? '<div class="identity-members"><span class="identity-note">Linked IDs</span>' + p.members.map(function(id){return '<span class="identity-chip" title="'+esc(id)+'">'+esc(id.slice(0,10))+(id!==p.id?' <button type="button" class="profile-separate" data-member="'+esc(id)+'" data-canonical="'+esc(p.id)+'" aria-label="Unlink '+esc(id)+'">Unlink</button>':'')+'</span>';}).join('') + '</div>' : '';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div>'+members+'<div class="profile-actions"><button class="favorite-btn" data-vid="'+esc(p.id)+'" title="Save profile for quick review">☆ Save</button><button class="profile-review" data-vid="'+esc(p.id)+'" title="Inspect and correct individual visits">Review visits</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Keep this card and add another profile to it">Combine with another…</button><button class="profile-delete" data-kind="visitor" data-vid="'+esc(p.id)+'" title="Delete this profile and all of its visits and clicks">Delete</button></div></div>';
-  }).join('') + '</div><div class="identity-history"><h3>Identity activity</h3>' + (identityEvents.length ? '<ul>' + identityEvents.map(function(ev){var summary=ev.action==='merge'?'Combined '+ev.affected.length+' ID'+(ev.affected.length===1?'':'s'):ev.action==='separate'?'Unlinked an ID':ev.action==='move'?'Moved visit #'+ev.viewId:'Restored visit #'+ev.viewId;return '<li>'+formatTime(ev.createdAt)+' · '+summary+(ev.target?' → '+esc(ev.target.slice(0,10)):'')+'</li>';}).join('')+'</ul>' : '<p class="identity-note">No identity changes yet.</p>') + '</div></div>' : ''}
+  <section id="interactions" data-view aria-labelledby="interactionsTitle" hidden>
+    <header class="section-head"><div><h1 id="interactionsTitle" tabindex="-1">Interactions</h1><p class="muted">How visitors use your site</p></div></header>
+    <dl class="engagement-summary">
+      ${metric('statClicks', 'Total clicks', number.format(engagement.totalClicks))}
+      ${metric('statSessions', 'Recent sessions', number.format(engagement.sessions), 'Up to 50 with recorded activity')}
+      ${metric('statAvg', 'Avg. activity span', fmtDur(engagement.avgDurationSec), 'First to last recorded event')}
+    </dl>
+    <section class="card top-clicks" aria-labelledby="topClickTitle">
+      <header class="card-head"><h2 id="topClickTitle">Most clicked</h2></header>
+      <ol id="topClickList" role="list"></ol>
+    </section>
+    <section class="card table-card" aria-labelledby="clickLogTitle">
+      <header class="card-head"><div><h2 id="clickLogTitle">Interaction log</h2><p class="muted">The latest 60 click records</p></div>
+        <div class="search-wrap"><input type="search" id="clickSearch" placeholder="Search interactions…" aria-label="Search interactions" autocomplete="off"></div>
+      </header>
+      <details class="identity-note"><summary>About interaction labels</summary><p>Named controls are identified by the site. Inferred controls use browser semantics. Positions are coordinates within the viewport.</p></details>
+      ${logTable('click', ['Time (Central)', 'Interaction', 'Approx. area', 'Section', 'Destination', 'Profile', 'Position'], '<tr><td colspan="9" class="empty-state">Loading interactions…</td></tr>')}
+    </section>
+  </section>
 
+  <section id="profiles" data-view aria-labelledby="profilesTitle" hidden>
+    <header class="section-head"><div><p class="eyebrow">Identity studio</p><h1 id="profilesTitle" tabindex="-1">Visitor profiles</h1></div></header>
+    <div class="log-tools">
+      <div class="search-wrap"><input type="search" id="profileSearch" placeholder="Search profiles…" aria-label="Search profiles" autocomplete="off"></div>
+      <label><input type="checkbox" class="chk" id="savedProfiles"> Saved only</label>
+    </div>
+    <div id="profileGrid" class="profile-grid"></div>
+    <details class="card identity-history"><summary>Identity activity</summary><div id="identityHistory"></div></details>
+  </section>
+
+  <section id="settings" data-view aria-labelledby="settingsTitle" hidden>
+    <header class="section-head"><div><h1 id="settingsTitle" tabindex="-1">Settings</h1></div></header>
+    <section class="card danger-zone" aria-labelledby="dangerTitle">
+      <h2 id="dangerTitle">Delete analytics data</h2>
+      <p>Deleting data is permanent. Choose the records you want to clear.</p>
+      <div class="danger-actions">
+        <button type="button" class="danger-btn" data-danger="all_visits">Delete all visits</button>
+        <button type="button" class="danger-btn" data-danger="all_engagement">Delete clicks and sessions</button>
+        <button type="button" class="danger-btn" data-danger="all">Delete all analytics</button>
+      </div>
+    </section>
+  </section>
+</main>
+<footer class="shell">Visit and interaction times use US Central time.</footer>
   <dialog class="identity-dialog" id="identityDialog" aria-labelledby="identityDialogTitle">
     <h2 id="identityDialogTitle">Are these the same person?</h2>
     <p id="identityDialogDescription">The card you opened stays. Choose another profile to add to it.</p>
@@ -2598,70 +1766,10 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     <div class="identity-dialog-actions"><button type="button" id="visitClose">Close</button></div>
   </dialog>
 
-  <div class="grid-2">
-    <div class="card">
-      <h2>Views — last 30 days</h2>
-      <div class="trend-wrap" id="trendWrap">
-        <svg class="trend" viewBox="0 0 100 40" preserveAspectRatio="none">
-          <polyline class="trend-poly" id="trendPoly" points="${trendPoly}"/>
-        </svg>
-        ${trendEmpty ? '<p class="empty-state">No data yet</p>' : '<div class="trend-date" id="trendDate"><span>' + trend[0].date + '</span><span>Peak: ' + trendMax + '</span><span>' + trend[trend.length-1].date + '</span></div>'}
-      </div>
-    </div>
-    <div class="card">
-      <h2>Top Sources</h2>
-      <div id="refList">${referrerRows}</div>
-    </div>
-  </div>
-
-  ${countries.length ? '<div class="card"><h2>Top Countries</h2><div class="country-list" id="countryList">' + countryChips + '</div></div>' : ''}
-
-  <div class="card">
-    <div class="card-head">
-      <h2>Recent Visits</h2>
-      <div class="search-wrap">
-        <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input type="text" id="recentSearch" placeholder="Filter visits…" autocomplete="off" aria-label="Filter visits">
-      </div>
-    </div>
-    <div class="bulkbar" id="recentBulk" hidden>
-      <span><strong id="recentSelCount">0</strong>&nbsp;selected</span>
-      <span class="spacer"></span>
-      <button type="button" class="ghost-btn" id="recentClearSel">Clear</button>
-      <button type="button" class="danger-btn" id="recentBulkDelete">Delete selected</button>
-    </div>
-    <div class="table-scroll-x">
-      <table>
-        <thead><tr><th class="sel-col"><input type="checkbox" class="chk" id="recentAll" aria-label="Select all visits"></th><th>Time (CST)</th><th>Approx. area</th><th>Device · OS</th><th>Source</th><th>Profile</th><th class="act-col"></th></tr></thead>
-        <tbody id="recentTbody">${recentRows}</tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="card danger-zone">
-    <h2>Danger Zone</h2>
-    <p>Permanently delete analytics data. These actions run immediately and cannot be undone. Dashboard sessions and rate-limit data are never touched.</p>
-    <div class="danger-actions">
-      <button type="button" class="danger-btn" data-danger="all_visits">Delete all visits</button>
-      <button type="button" class="danger-btn" data-danger="all_engagement">Delete all clicks &amp; engagement</button>
-      <button type="button" class="danger-btn" data-danger="all">Delete ALL data</button>
-    </div>
-  </div>
-  <div class="auto-refresh"><span class="dot"></span> Auto-refreshes every 60s &middot; All times in CST</div>
-</div>
 <script>window.__DASH=${dashSeed};</script>
-<script>
-${DASHBOARD_CLIENT_JS}
-</script>
+<script>${DASHBOARD_CLIENT_JS}</script>
 </body>
 </html>`;
-}
-
-function flag(code) {
-  if (!code || code.length !== 2) return '';
-  const a = 0x1F1E6 - 65 + code.toUpperCase().charCodeAt(0);
-  const b = 0x1F1E6 - 65 + code.toUpperCase().charCodeAt(1);
-  return String.fromCodePoint(a, b);
 }
 
 function formatTime(t) {
@@ -2672,10 +1780,6 @@ function formatTime(t) {
 
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function truncate(s, n) {
-  return s.length > n ? s.slice(0, n) + '...' : s;
 }
 
 // Cloudflare's city and coordinates are IP geolocation estimates, not device GPS.
@@ -2714,18 +1818,4 @@ function parseUADetailed(ua) {
   if (/Tablet|iPad/.test(ua)) device = 'Tablet';
   else if (/Mobi|Android|iPhone/.test(ua)) device = 'Mobile';
   return { device, os, browser };
-}
-
-function timeAgo(t) {
-  if (!t) return '';
-  const diff = Math.floor((Date.now() - new Date(t + 'Z').getTime()) / 1000);
-  if (diff < 0) return 'just now';
-  if (diff < 60) return diff + 's ago';
-  const mins = Math.floor(diff / 60);
-  if (mins < 60) return mins + 'm ago';
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return hours + 'h ago';
-  const days = Math.floor(hours / 24);
-  if (days < 30) return days + 'd ago';
-  return Math.floor(days / 30) + 'mo ago';
 }
