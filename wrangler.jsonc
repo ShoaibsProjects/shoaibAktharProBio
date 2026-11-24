@@ -18,7 +18,7 @@
     }
   ],
 
-  // Fast per-location gate: reject event floods before the D1-backed limiter
+  // Fast per-location gate for engagement, visit and sign-in scopes before the D1 limiter
   // and analytics insert can consume database writes. D1 remains a secondary
   // cross-request guard; Cloudflare's binding is approximate, not global accounting.
   "ratelimits": [

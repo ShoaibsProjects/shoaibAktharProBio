@@ -2,7 +2,7 @@ import { DASHBOARD_CLIENT_JS } from './dashboard-client.js';
 import { dashboardStyles, themeScript } from './dashboard-style.js';
 import { centralCalendar, centralDate, centralDayRange, DASHBOARD_TIME_ZONE } from './dashboard-calendar.js';
 
-var VERSION = '3.39.1'; // bump when you change the worker code
+var VERSION = '3.39.2'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -83,7 +83,7 @@ var VERSION = '3.39.1'; // bump when you change the worker code
  *
  * @module pageview-logger
  * @author Shoaib Akthar
- * @version 3.39.1
+ * @version 3.39.2
  */
 
 export default {
@@ -187,6 +187,7 @@ export default {
 
 // ── Security headers applied to every response ──
 const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+const TURNSTILE_ACTION = 'turnstile-spin-v2';
 
 function dashboardCsp(nonce, hasTurnstile) {
   const challenge = hasTurnstile ? ' ' + TURNSTILE_ORIGIN : '';
@@ -235,9 +236,57 @@ async function checkRateLimit(db, ip, scope, windowSec, max) {
     `INSERT INTO rate_limits (ip, scope, bucket, count)
      VALUES (?, ?, ?, 1)
      ON CONFLICT (ip, scope, bucket) DO UPDATE SET count = count + 1
+     WHERE rate_limits.count < ?
      RETURNING count`
-  ).bind(ip, scope, bucket).first();
-  return (res && res.count) <= max;
+  ).bind(ip, scope, bucket, max).first();
+  return Boolean(res);
+}
+
+// The same native namespace serves independent scopes through distinct keys.
+async function edgeLimitStatus(env, key) {
+  try {
+    return (await env.EVENT_INGEST_LIMITER.limit({ key })).success ? 0 : 429;
+  } catch (_) {
+    return 503;
+  }
+}
+
+async function readBoundedBody(request, max) {
+  if (Number(request.headers.get('Content-Length')) > max) return null;
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const buffer = new Uint8Array(max);
+  let length = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return buffer.subarray(0, length);
+      if (length + value.byteLength > max) {
+        await reader.cancel();
+        return null;
+      }
+      buffer.set(value, length);
+      length += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function readTelemetry(request, max, headers) {
+  const badJson = () => Response.json({ ok: false, reason: 'bad_json' }, { status: 400, headers });
+  try {
+    const bytes = await readBoundedBody(request, max);
+    if (!bytes) return { error: Response.json({ ok: false, reason: 'payload_too_large' }, { status: 413, headers }) };
+    const body = JSON.parse(new TextDecoder().decode(bytes));
+    return body && typeof body === 'object' && !Array.isArray(body) ? { body } : { error: badJson() };
+  } catch (_) {
+    return { error: badJson() };
+  }
+}
+
+function telemetryThrottle(status, headers) {
+  return Response.json({ ok: false, reason: status === 429 ? 'rate_limited' : 'rate_limit_unavailable' }, { status, headers });
 }
 
 // ── Constant-time comparison (defeats timing side-channel on the key) ──
@@ -250,12 +299,12 @@ async function constantTimeEqual(a, b) {
   return crypto.subtle.timingSafeEqual(da, db);
 }
 
-// ── Referrer sanitization: only real http(s) URLs are stored/rendered ──
+// Store the referrer origin for acquisition reporting without collecting its URL parameters.
 function sanitizeReferrer(ref) {
   if (!ref) return null;
   try {
     const u = new URL(ref);
-    if (u.protocol === 'http:' || u.protocol === 'https:') return ref;
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.origin;
   } catch (_) { /* not a URL */ }
   return null;
 }
@@ -336,8 +385,7 @@ function sessionJti(token) {
 async function handleLogVisit(request, env) {
   const base = securityHeaders({ 'Vary': 'Origin' });
   const origin = request.headers.get('Origin');
-  // Require a valid Origin: browsers always send one on cross-origin POSTs.
-  // This stops raw clients from logging fake views even with the public key.
+  // The allowlist controls browser origins. It does not authenticate network clients.
   if (!origin || !originAllowed(origin, env)) {
     return new Response('Forbidden', { status: 403, headers: securityHeaders() });
   }
@@ -363,49 +411,25 @@ async function handleLogVisit(request, env) {
     return Response.json({ ok: false, reason: 'bot' }, { status: 403, headers: base });
   }
 
-  // 2) Hard cap on accepted visits per day (protects D1 write budget across all IPs)
-  const withinBudget = await checkRateLimit(env.DB, ip, 'daily-budget', 86400, 5000);
-  if (!withinBudget) {
-    return Response.json({ ok: false, reason: 'budget' }, { status: 429, headers: base });
-  }
+  const edgeStatus = await edgeLimitStatus(env, 'visit:' + ip);
+  if (edgeStatus) return telemetryThrottle(edgeStatus, base);
 
-  // 3) Per-IP rate limit: max 5 log attempts per 60s
-  const allowed = await checkRateLimit(env.DB, ip, 'log-visit', 60, 5);
-  if (!allowed) {
-    return Response.json({ ok: false, reason: 'rate_limited' }, { status: 429, headers: base });
-  }
-
-  // 4) Cap payload size (beacon should be tiny)
-  const contentLength = Number(request.headers.get('Content-Length') || 0);
-  if (contentLength > 4096) {
-    return Response.json({ ok: false, reason: 'payload_too_large' }, { status: 413, headers: base });
-  }
-
-  let body = {};
-  try {
-    body = await request.json();
-  } catch (_) {
-    return Response.json({ ok: false, reason: 'bad_json' }, { status: 400, headers: base });
-  }
-
-  // 5) This browser-visible marker filters accidental/unscripted writes; it is
-  // not a secret or an authentication boundary.
-  if (!body.key || !(await constantTimeEqual(String(body.key), env.LOG_KEY))) {
+  const { body, error } = await readTelemetry(request, 4096, base);
+  if (error) return error;
+  // The browser marker filters accidental traffic. It is public.
+  if (typeof body.key !== 'string' || !body.key || !(await constantTimeEqual(body.key, env.LOG_KEY))) {
     return Response.json({ ok: false, reason: 'unauthorized' }, { status: 401, headers: base });
   }
 
-  // 6) Validate pageUrl to stop junk data
-  const allowedHosts = ['shoaibsprojects.github.io', 'shoaibakthar.pro', 'localhost'];
-  const pageUrl = body.pageUrl || null;
-  if (pageUrl) {
-    let ok = false;
-    try {
-      const u = new URL(pageUrl);
-      ok = allowedHosts.includes(u.hostname);
-    } catch (_) { ok = false; }
-    if (!ok) {
-      return Response.json({ ok: false, reason: 'invalid_page_url' }, { status: 400, headers: base });
-    }
+  const pageUrl = eventPageUrl(body.pageUrl, origin);
+  if (body.pageUrl && !pageUrl) {
+    return Response.json({ ok: false, reason: 'invalid_page_url' }, { status: 400, headers: base });
+  }
+
+  if (!(await checkRateLimit(env.DB, ip, 'log-visit', 60, 5))) return telemetryThrottle(429, base);
+  // Leave capacity for administration even when distributed telemetry is heavy.
+  if (!(await checkRateLimit(env.DB, 'global', 'daily-visit-budget', 86400, 5000))) {
+    return Response.json({ ok: false, reason: 'budget' }, { status: 429, headers: base });
   }
 
   const cf = request.cf || {};
@@ -527,35 +551,12 @@ async function handleEvent(request, env) {
   const ua = request.headers.get('User-Agent') || '';
   if (isBot(ua)) return Response.json({ ok: false, reason: 'bot' }, { status: 403, headers: base });
 
-  // Enforce an edge-local ceiling before touching D1. The D1 limiter below is
-  // still the shared secondary guard, but every D1-backed rate-limit check is
-  // itself a write and cannot protect the database from a sustained flood.
-  let edgeLimit;
-  try {
-    if (!env.EVENT_INGEST_LIMITER) throw new Error('event limiter binding is missing');
-    edgeLimit = await env.EVENT_INGEST_LIMITER.limit({ key: ip });
-  } catch (_) {
-    return Response.json({ ok: false, reason: 'rate_limit_unavailable' }, { status: 503, headers: base });
-  }
-  if (!edgeLimit.success) {
-    return Response.json({ ok: false, reason: 'rate_limited' }, { status: 429, headers: base });
-  }
+  const edgeStatus = await edgeLimitStatus(env, ip);
+  if (edgeStatus) return telemetryThrottle(edgeStatus, base);
 
-  // Shared D1 secondary limit: max 60 events/minute/IP across Worker locations.
-  const allowed = await checkRateLimit(env.DB, ip, 'events', 60, 60);
-  if (!allowed) return Response.json({ ok: false, reason: 'rate_limited' }, { status: 429, headers: base });
-
-  // Payload must be tiny — reject oversized
-  const contentLength = Number(request.headers.get('Content-Length') || 0);
-  if (contentLength > 2048) return Response.json({ ok: false, reason: 'payload_too_large' }, { status: 413, headers: base });
-
-  let body = {};
-  try { body = await request.json(); } catch (_) {
-    return Response.json({ ok: false, reason: 'bad_json' }, { status: 400, headers: base });
-  }
-
-  // Same public client marker as /log-visit; event ingestion is anonymous.
-  if (!body.key || !(await constantTimeEqual(String(body.key), env.LOG_KEY))) {
+  const { body, error } = await readTelemetry(request, 2048, base);
+  if (error) return error;
+  if (typeof body.key !== 'string' || !body.key || !(await constantTimeEqual(body.key, env.LOG_KEY))) {
     return Response.json({ ok: false, reason: 'unauthorized' }, { status: 401, headers: base });
   }
 
@@ -573,13 +574,18 @@ async function handleEvent(request, env) {
     return Response.json({ ok: false, reason: 'no_session' }, { status: 403, headers: base });
   }
 
-  const session_id = String(body.session_id || '');
+  const session_id = eventText(body.session_id, 80);
   const event_type = String(body.event_type || '');
 
   // Whitelist accepted event types — reject anything else (prevents schema abuse)
   const allowedEvents = new Set(['heartbeat', 'click', 'pagehide', 'pageshow', 'focus']);
   if (!allowedEvents.has(event_type)) {
     return Response.json({ ok: false, reason: 'bad_event_type' }, { status: 400, headers: base });
+  }
+
+  if (!(await checkRateLimit(env.DB, ip, 'events', 60, 60))) return telemetryThrottle(429, base);
+  if (!(await checkRateLimit(env.DB, 'global', 'daily-event-budget', 86400, 8000))) {
+    return Response.json({ ok: false, reason: 'budget' }, { status: 429, headers: base });
   }
 
   if (event_type === 'click') {
@@ -866,49 +872,38 @@ async function handleDelete(request, env) {
       const ids = dedupeIds(body.ids).filter(validVisitorId).slice(0, 50);
       if (!ids.length) return Response.json({ error: 'bad_ids' }, { status: 400, headers: h });
 
-      // Resolve each profile's raw member IDs and page_view IDs. Identity links and
-      // per-visit overrides can move visits under a canonical profile, so a profile
-      // delete must reach all three: raw visitors, canonical profile, and view IDs.
-      const ph = ids.map(() => '?').join(',');
-      const [membersRes, linksRes, viewsRes] = await Promise.all([
-        db.prepare(
-          `SELECT DISTINCT v.visitor_id AS original_id
-           FROM page_views v
-           LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
-           LEFT JOIN visitor_identity_links il ON il.visitor_id = COALESCE(ov.profile_id, v.visitor_id)
-           WHERE COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) IN (${ph})`
-        ).bind(...ids).all(),
-        db.prepare(`SELECT visitor_id FROM visitor_identity_links WHERE canonical_id IN (${ph})`).bind(...ids).all(),
-        db.prepare(
-          `SELECT v.id
-           FROM page_views v
-           LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
-           LEFT JOIN visitor_identity_links il ON il.visitor_id = COALESCE(ov.profile_id, v.visitor_id)
-           WHERE COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) IN (${ph})`
-        ).bind(...ids).all(),
-      ]);
-      const memberIds = dedupeIds([...ids, ...(linksRes.results || []).map(r => r.visitor_id), ...(membersRes.results || []).map(r => r.original_id)]).slice(0, 500);
-      const profileIds = dedupeIds([...ids, ...(linksRes.results || []).map(r => r.visitor_id)]).slice(0, 500);
-      const viewIds = dedupeIds((viewsRes.results || []).map(r => r.id)).slice(0, 1000);
-
-      const sets = [['m', memberIds], ['p', profileIds], ['v', viewIds]];
-      const ctes = cteValues(sets);
-      const bindAll = memberIds.concat(profileIds, viewIds);
+      const selected = 'SELECT value FROM json_each(?)';
+      const profileIds = JSON.stringify(ids);
+      const selectedVisits = `
+        SELECT v.id
+        FROM page_views v
+        LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
+        LEFT JOIN visitor_identity_links il ON il.visitor_id = COALESCE(ov.profile_id, v.visitor_id)
+        WHERE COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) IN (${selected})`;
+      // Engagement follows the original visitor's current canonical group.
+      // A move override owns the visit only and must never broaden the engagement scope.
       const results = await db.batch([
-        db.prepare(`${ctes} DELETE FROM visitor_visit_events WHERE original_id IN (SELECT id FROM m) OR profile_id IN (SELECT id FROM p) OR page_view_id IN (SELECT id FROM v)`).bind(...bindAll),
-        db.prepare(`${ctes} DELETE FROM visitor_visit_overrides WHERE profile_id IN (SELECT id FROM p) OR page_view_id IN (SELECT id FROM v)`).bind(...bindAll),
-        db.prepare(`${ctes} DELETE FROM visitor_identity_links WHERE visitor_id IN (SELECT id FROM m) OR canonical_id IN (SELECT id FROM p)`).bind(...bindAll),
-        db.prepare(`${ctes} DELETE FROM visitor_identity_events WHERE source_id IN (SELECT id FROM p) OR target_id IN (SELECT id FROM p)`).bind(...bindAll),
-        db.prepare(`${ctes} DELETE FROM page_engagement WHERE visitor_id IN (SELECT id FROM m)`).bind(...bindAll),
-        db.prepare(`${ctes} DELETE FROM page_views WHERE id IN (SELECT id FROM v)`).bind(...bindAll),
+        db.prepare(`DELETE FROM visitor_visit_events WHERE page_view_id IN (${selectedVisits})`).bind(profileIds),
+        db.prepare(
+          `WITH requested(id) AS (${selected})
+           DELETE FROM page_engagement WHERE visitor_id IN (
+             SELECT r.id FROM requested r
+             WHERE NOT EXISTS (SELECT 1 FROM visitor_identity_links l WHERE l.visitor_id = r.id)
+             UNION ALL
+             SELECT l.visitor_id FROM visitor_identity_links l WHERE l.canonical_id IN (SELECT id FROM requested)
+           )`
+        ).bind(profileIds),
+        // The foreign key removes overrides for exactly these deleted visits.
+        db.prepare(`DELETE FROM page_views WHERE id IN (${selectedVisits})`).bind(profileIds),
+        db.prepare(`DELETE FROM visitor_identity_events WHERE target_id IN (${selected})`).bind(profileIds),
+        db.prepare(`DELETE FROM visitor_identity_links WHERE canonical_id IN (${selected})`).bind(profileIds),
       ]);
       const deleted = {
         visit_events: chg(results[0]),
-        visit_overrides: chg(results[1]),
-        identity_links: chg(results[2]),
+        engagement: chg(results[1]),
+        page_views: chg(results[2]),
         identity_events: chg(results[3]),
-        engagement: chg(results[4]),
-        page_views: chg(results[5]),
+        identity_links: chg(results[4]),
       };
       console.log(JSON.stringify({ event: 'data_deleted', scope, profiles: ids.length, deleted }));
       return Response.json({ ok: true, scope, deleted }, { headers: h });
@@ -976,16 +971,6 @@ function chg(r) { return r?.meta?.changes ?? r?.changes ?? 0; }
 
 function dedupeIds(arr) {
   return [...new Set((Array.isArray(arr) ? arr : []).map(String).filter(Boolean))];
-}
-
-// Build a `WITH name(id) AS (VALUES (?),...)` prefix for each [name, values] pair.
-// Empty sets become `(SELECT NULL WHERE 0)` so the CTE stays valid and matches nothing.
-function cteValues(pairs) {
-  return 'WITH ' + pairs.map(function (p) {
-    const name = p[0], values = p[1] || [];
-    if (!values.length) return name + '(id) AS (SELECT NULL WHERE 0)';
-    return name + '(id) AS (VALUES ' + values.map(function () { return '(?)'; }).join(',') + ')';
-  }).join(', ');
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1065,13 +1050,12 @@ async function handleLogout(request, env) {
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405, headers: securityHeaders() });
   }
-  // Revoke the session server-side so the token dies even if the cookie leaks.
+  if (!sameOriginMutation(request)) {
+    return new Response('Forbidden', { status: 403, headers: securityHeaders() });
+  }
   const session = sessionTokenFrom(request.headers.get('Cookie') || '');
-  if (session) {
-    const jti = sessionJti(session);
-    if (jti) {
-      await env.DB.prepare('DELETE FROM sessions WHERE jti = ?').bind(jti).run();
-    }
+  if (session && await verifySessionToken(session, env)) {
+    await env.DB.prepare('DELETE FROM sessions WHERE jti = ?').bind(sessionJti(session)).run();
   }
   const headers = securityHeaders({
     'Location': '/dashboard',
@@ -1094,44 +1078,43 @@ async function handleDashboard(request, env) {
 
   // POST: authenticate and set session cookie
   if (request.method === 'POST') {
+    const signInError = (message, status) => new Response(loginPage(message, env, nonce), { status, headers: htmlHeaders });
+    if (!sameOriginMutation(request)) return signInError('Sign in from this page.', 403);
+    if (!env.DASHBOARD_KEY) return signInError('Sign-in is temporarily unavailable.', 503);
+
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+    const edgeStatus = await edgeLimitStatus(env, 'login:' + ip);
+    if (edgeStatus === 503) return signInError('Sign-in is temporarily unavailable.', 503);
+    if (edgeStatus === 429) return signInError('Too many attempts. Try again in a minute.', 429);
 
-    // Brute-force protection: max 5 login attempts per 10 min per IP
-    const allowed = await checkRateLimit(env.DB, ip, 'dashboard-login', 600, 5);
-    if (!allowed) {
-      return new Response(loginPage('Too many attempts. Try again in 10 minutes.', env, nonce), {
-        status: 429,
-        headers: htmlHeaders,
-      });
-    }
-
-    // Optional Cloudflare Turnstile (human verification) if configured
     let body;
     try {
-      body = await request.formData();
+      const bytes = await readBoundedBody(request, 8192);
+      if (!bytes) return signInError('Sign-in request is too large.', 413);
+      const type = request.headers.get('Content-Type') || '';
+      const local = new Response(bytes, { headers: { 'Content-Type': type } });
+      body = type.includes('form') ? Object.fromEntries(await local.formData()) : await local.json();
     } catch (_) {
-      try { body = await request.json(); } catch (__) { body = null; }
+      return signInError('Invalid sign-in request.', 400);
     }
+    if (!body || typeof body.key !== 'string' || !body.key) return signInError('Enter your access key.', 400);
+
+    // Count only well-formed attempts and stop updating a saturated bucket.
+    if (!(await checkRateLimit(env.DB, ip, 'dashboard-login', 600, 5))) {
+      return signInError('Too many attempts. Try again in 10 minutes.', 429);
+    }
+
     if (env.TURNSTILE_SECRET) {
-      const token = (body && typeof body.get === 'function' ? (body.get('turnstile') || body.get('cf-turnstile-response') || '') : '') || '';
-      // Best-effort Turnstile: the client intentionally submits WITHOUT a token when the widget
-      // fails to initialize (e.g. Safari iOS / mobile / Private Relay), so only reject a PRESENT
-      // but invalid token. The brute-force rate limit above still guards this endpoint.
-      if (token && !(await verifyTurnstile(env, token))) {
-        return new Response(loginPage('Verification failed. Please try again.', env, nonce), {
-          status: 401,
-          headers: htmlHeaders,
-        });
+      const token = body.turnstile || body['cf-turnstile-response'];
+      const hostname = new URL(request.url).hostname;
+      if (typeof token !== 'string' || !token || token.length > 2048 || !(await verifyTurnstile(env, token, hostname))) {
+        return signInError('Complete the verification and try again.', 401);
       }
     }
 
-    const key = body?.get?.('key') || body?.key || '';
-    if (!(await constantTimeEqual(String(key), env.DASHBOARD_KEY))) {
+    if (!(await constantTimeEqual(body.key, env.DASHBOARD_KEY))) {
       console.warn(JSON.stringify({ event: 'login_fail' }));
-      return new Response(loginPage('Invalid key', env, nonce), {
-        status: 401,
-        headers: htmlHeaders,
-      });
+      return signInError('Invalid key', 401);
     }
     console.log(JSON.stringify({ event: 'login_ok' }));
     const token = await createSessionToken(env);
@@ -1171,7 +1154,7 @@ async function handleDashboard(request, env) {
 }
 
 // Optional Turnstile verification (only called when TURNSTILE_SECRET is configured)
-async function verifyTurnstile(env, token) {
+async function verifyTurnstile(env, token, hostname) {
   try {
     const params = new URLSearchParams();
     params.set('secret', env.TURNSTILE_SECRET);
@@ -1179,14 +1162,15 @@ async function verifyTurnstile(env, token) {
     // Note: no `remoteip` — on iOS Private Relay / mobile IP rotation the IP at token-mint
     // time can differ from the IP at siteverify time, which makes Cloudflare reject valid
     // tokens. remoteip is optional; omitting it avoids those false rejections.
-    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+    const res = await fetch(TURNSTILE_ORIGIN + '/turnstile/v0/siteverify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
+      signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return false;
     const data = await res.json();
-    return data.success === true;
+    return data.success === true && data.action === TURNSTILE_ACTION && data.hostname === hostname;
   } catch (_) {
     return false;
   }
@@ -1252,16 +1236,14 @@ async function handleStats(request, env) {
     return new Response(JSON.stringify({ error: 'method_not_allowed' }), { status: 405, headers: jsonHeaders });
   }
 
-  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-  const allowed = await checkRateLimit(env.DB, ip, 'stats', 60, 30);
-  if (!allowed) {
-    return new Response(JSON.stringify({ error: 'rate_limited' }), { status: 429, headers: jsonHeaders });
+  const session = sessionTokenFrom(request.headers.get('Cookie') || '');
+  if (!session || !(await verifySessionToken(session, env))) {
+    return Response.json({ error: 'unauthorized' }, { status: 401, headers: jsonHeaders });
   }
 
-  const session = sessionTokenFrom(request.headers.get('Cookie') || '');
-
-  if (!session || !(await verifySessionToken(session, env))) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: jsonHeaders });
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  if (!(await checkRateLimit(env.DB, ip, 'stats', 60, 30))) {
+    return Response.json({ error: 'rate_limited' }, { status: 429, headers: jsonHeaders });
   }
 
   return Response.json(await queryDashboard(env.DB), { headers: jsonHeaders });
@@ -1338,7 +1320,7 @@ async function queryEngagement(db) {
             COUNT(*) AS events
      FROM page_engagement
      WHERE session_id IS NOT NULL AND session_id != ''
-     GROUP BY session_id
+     GROUP BY visitor_id, session_id
      ORDER BY started DESC
      LIMIT 50`
   ).all();
@@ -1583,7 +1565,7 @@ function loginPage(msg, env, nonce) {
   const hasTurnstile = !!env?.TURNSTILE_SECRET;
   const siteKey = env?.TURNSTILE_SITE_KEY || '0x4AAAAAAEEnNXNege0uqc_0';
   const turnstile = hasTurnstile ? `
-    <div id="dashboardChallenge" class="cf-turnstile" data-sitekey="${esc(siteKey)}" data-action="turnstile-spin-v2" data-theme="auto" data-size="compact"></div>
+    <div id="dashboardChallenge" class="cf-turnstile" data-sitekey="${esc(siteKey)}" data-action="${TURNSTILE_ACTION}" data-theme="auto" data-size="compact"></div>
     <script nonce="${nonce}">
       var challenge = document.getElementById('dashboardChallenge');
       if (challenge.clientWidth >= 300) challenge.dataset.size = 'flexible';
