@@ -2,7 +2,7 @@ import { DASHBOARD_CLIENT_JS } from './dashboard-client.js';
 import { dashboardStyles, themeScript } from './dashboard-style.js';
 import { centralCalendar, centralDate, centralDayRange, DASHBOARD_TIME_ZONE } from './dashboard-calendar.js';
 
-var VERSION = '3.39.0'; // bump when you change the worker code
+var VERSION = '3.39.1'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -83,7 +83,7 @@ var VERSION = '3.39.0'; // bump when you change the worker code
  *
  * @module pageview-logger
  * @author Shoaib Akthar
- * @version 3.39.0
+ * @version 3.39.1
  */
 
 export default {
@@ -186,6 +186,23 @@ export default {
 };
 
 // ── Security headers applied to every response ──
+const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+
+function dashboardCsp(nonce, hasTurnstile) {
+  const challenge = hasTurnstile ? ' ' + TURNSTILE_ORIGIN : '';
+  return [
+    "default-src 'none'",
+    "script-src 'nonce-" + nonce + "'" + challenge,
+    "style-src 'self' 'unsafe-inline'",
+    "connect-src 'self'" + challenge,
+    "frame-src" + (hasTurnstile ? challenge : " 'none'"),
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "form-action 'self'",
+  ].join('; ');
+}
+
 function securityHeaders(extra = {}) {
   return {
     'X-Content-Type-Options': 'nosniff',
@@ -195,7 +212,7 @@ function securityHeaders(extra = {}) {
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Cross-Origin-Resource-Policy': 'same-origin',
     'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
-    'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; img-src 'self' data: https:; connect-src 'self' https://challenges.cloudflare.com",
+    'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     ...extra,
   };
 }
@@ -1066,7 +1083,9 @@ async function handleLogout(request, env) {
 
 // ── GET/POST /dashboard ──
 async function handleDashboard(request, env) {
+  const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
   const htmlHeaders = securityHeaders({
+    'Content-Security-Policy': dashboardCsp(nonce, Boolean(env.TURNSTILE_SECRET)),
     'Content-Type': 'text/html;charset=UTF-8',
     'Cache-Control': 'no-store',
     'X-Robots-Tag': 'noindex, nofollow',
@@ -1080,7 +1099,7 @@ async function handleDashboard(request, env) {
     // Brute-force protection: max 5 login attempts per 10 min per IP
     const allowed = await checkRateLimit(env.DB, ip, 'dashboard-login', 600, 5);
     if (!allowed) {
-      return new Response(loginPage('Too many attempts. Try again in 10 minutes.', env), {
+      return new Response(loginPage('Too many attempts. Try again in 10 minutes.', env, nonce), {
         status: 429,
         headers: htmlHeaders,
       });
@@ -1099,7 +1118,7 @@ async function handleDashboard(request, env) {
       // fails to initialize (e.g. Safari iOS / mobile / Private Relay), so only reject a PRESENT
       // but invalid token. The brute-force rate limit above still guards this endpoint.
       if (token && !(await verifyTurnstile(env, token))) {
-        return new Response(loginPage('Verification failed. Please try again.', env), {
+        return new Response(loginPage('Verification failed. Please try again.', env, nonce), {
           status: 401,
           headers: htmlHeaders,
         });
@@ -1109,7 +1128,7 @@ async function handleDashboard(request, env) {
     const key = body?.get?.('key') || body?.key || '';
     if (!(await constantTimeEqual(String(key), env.DASHBOARD_KEY))) {
       console.warn(JSON.stringify({ event: 'login_fail' }));
-      return new Response(loginPage('Invalid key', env), {
+      return new Response(loginPage('Invalid key', env, nonce), {
         status: 401,
         headers: htmlHeaders,
       });
@@ -1122,7 +1141,7 @@ async function handleDashboard(request, env) {
     const redirectPage =
       '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">' +
       '<title>Redirecting…</title><meta http-equiv="refresh" content="0;url=/dashboard">' +
-      '</head><body><script>window.location.replace("/dashboard")</script></body></html>';
+      `</head><body><script nonce="${nonce}">window.location.replace("/dashboard")</script></body></html>`;
     const res = new Response(redirectPage, {
       status: 200,
       headers: {
@@ -1141,11 +1160,11 @@ async function handleDashboard(request, env) {
   const sessionValid = !!(session && await verifySessionToken(session, env));
   console.log(JSON.stringify({ event: 'dashboard_session_check', cookiePresent: !!session, valid: sessionValid }));
   if (sessionValid) {
-    const html = await renderDashboard(env.DB);
+    const html = await renderDashboard(env.DB, nonce);
     return new Response(html, { headers: htmlHeaders });
   }
 
-  return new Response(loginPage('', env), {
+  return new Response(loginPage('', env, nonce), {
     status: 401,
     headers: htmlHeaders,
   });
@@ -1173,8 +1192,8 @@ async function verifyTurnstile(env, token) {
   }
 }
 
-async function renderDashboard(db) {
-  return dashboardHtml(await queryDashboard(db));
+async function renderDashboard(db, nonce) {
+  return dashboardHtml(await queryDashboard(db), nonce);
 }
 
 async function queryDashboard(db) {
@@ -1546,36 +1565,31 @@ async function queryIdentityEvents(db) {
 const BRAND = '<span class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Site Activity</span>';
 const THEME_TOGGLE = '<button type="button" id="themeToggle" aria-label="Dark mode" aria-pressed="false" title="Dark mode"><span class="theme-icon" aria-hidden="true">◐</span></button>';
 
-function pageHead(title, csp) {
+function pageHead(title, nonce) {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<meta http-equiv="Content-Security-Policy" content="${csp}">
 <title>${title} | Site Activity</title>
-<script>${themeScript}</script>
+<script nonce="${nonce}">${themeScript}</script>
 <style>${dashboardStyles}</style>
 </head>`;
 }
 
-function loginPage(msg, env) {
+function loginPage(msg, env, nonce) {
   const error = msg ? `<p class="login-error" role="alert">${esc(msg)}</p>` : '';
   const hasTurnstile = !!env?.TURNSTILE_SECRET;
-  const host = 'https://challenges.cloudflare.com';
   const siteKey = env?.TURNSTILE_SITE_KEY || '0x4AAAAAAEEnNXNege0uqc_0';
-  const csp = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
-    + (hasTurnstile ? ` ${host}; frame-src ${host}; connect-src ${host}` : '')
-    + "; img-src 'self' data: https:";
   const turnstile = hasTurnstile ? `
     <div id="dashboardChallenge" class="cf-turnstile" data-sitekey="${esc(siteKey)}" data-action="turnstile-spin-v2" data-theme="auto" data-size="compact"></div>
-    <script>
+    <script nonce="${nonce}">
       var challenge = document.getElementById('dashboardChallenge');
       if (challenge.clientWidth >= 300) challenge.dataset.size = 'flexible';
     </script>
-    <script src="${host}/turnstile/v0/api.js" async defer></script>` : '';
-  return `${pageHead('Sign in', csp)}
+    <script nonce="${nonce}" src="${TURNSTILE_ORIGIN}/turnstile/v0/api.js" async defer></script>` : '';
+  return `${pageHead('Sign in', nonce)}
 <body>
 <header class="masthead"><div class="masthead-inner shell">${BRAND}${THEME_TOGGLE}</div></header>
 <main class="login-shell shell">
@@ -1594,7 +1608,7 @@ function loginPage(msg, env) {
     </form>
   </div>
 </main>
-<script>
+<script nonce="${nonce}">
   document.getElementById('eyeBtn').addEventListener('click', function () {
     var input = document.getElementById('keyInput');
     var show = input.type === 'password';
@@ -1634,12 +1648,12 @@ function logTable(kind, columns, rows) {
   </div>`;
 }
 
-function dashboardHtml({ totals, topCountries, recent, trend, referrers, engagement, profiles, identityEvents }) {
+function dashboardHtml({ totals, topCountries, recent, trend, referrers, engagement, profiles, identityEvents }, nonce) {
   const dashSeed = JSON.stringify({ totals, topCountries, recent, trend, referrers, engagement,
     profiles: profiles.map(({ id, visits, members, cities, countries, devices, oss, browsers, firstSeen, lastSeen, isps, ipHashes, timezones }) =>
       ({ id, visits, members, cities, countries, devices, oss, browsers, firstSeen, lastSeen, isps, ipHashes, timezones })),
     identityEvents
-  }).replace(/</g, '\u003c').replace(/\u2028/g, '\u2028').replace(/\u2029/g, '\u2029');
+  }).replace(/[<>&\u2028\u2029]/g, char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0'));
   const number = new Intl.NumberFormat('en-US');
   const recentRows = recent.length ? recent.map(v => {
     const place = [v.city, v.region, v.country].filter(Boolean).join(', ');
@@ -1656,7 +1670,7 @@ function dashboardHtml({ totals, topCountries, recent, trend, referrers, engagem
     </tr>`;
   }).join('') : '<tr role="row"><td role="cell" colspan="8" class="empty-state">No visits recorded yet.</td></tr>';
 
-  return `${pageHead('Dashboard', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'")}
+  return `${pageHead('Dashboard', nonce)}
 <body>
 <a class="sr-only skip-link button" href="#dashboardMain">Skip to content</a>
 <header class="masthead"><div class="masthead-inner shell">
@@ -1831,8 +1845,8 @@ function dashboardHtml({ totals, topCountries, recent, trend, referrers, engagem
     </div>
   </dialog>
 
-<script>window.__DASH=${dashSeed};</script>
-<script>${DASHBOARD_CLIENT_JS}</script>
+<script type="application/json" id="dashboardData">${dashSeed}</script>
+<script nonce="${nonce}">${DASHBOARD_CLIENT_JS}</script>
 </body>
 </html>`;
 }
