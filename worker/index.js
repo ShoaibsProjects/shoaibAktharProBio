@@ -1,4 +1,4 @@
-var VERSION = '3.36.0'; // bump when you change the worker code
+var VERSION = '3.37.0'; // bump when you change the worker code
 
 /**
  * pageview-logger — Cloudflare Worker analytics dashboard
@@ -57,6 +57,8 @@ var VERSION = '3.36.0'; // bump when you change the worker code
  *   /api/profile-visits GET — Review a profile's underlying visits
  *   /api/move-visit POST — Move one historical visit into another profile
  *   /api/restore-visit POST — Undo a per-visit correction
+ *   /api/reset-engagement POST — Delete all engagement rows
+ *   /api/delete        POST  — Delete selected visits / profiles / clicks / everything
  *   /logout            POST  — Revoke session (clears cookie + D1 jti)
  *
  * SCHEDULED JOBS (cron: 0 3 * * * — daily at 3 AM UTC)
@@ -111,6 +113,8 @@ export default {
         response = await handleRestoreVisit(request, env);
       } else if (path === '/api/reset-engagement') {
         response = await handleResetEngagement(request, env);
+      } else if (path === '/api/delete') {
+        response = await handleDelete(request, env);
       } else if (path === '/meta') {
         response = await handleMeta(request, env);
       } else {
@@ -788,6 +792,191 @@ async function handleResetEngagement(request, env) {
   return Response.json({ ok: true, deleted }, { headers: h });
 }
 
+// ── POST /api/delete (session + same-origin; atomic via D1 batch) ──
+// Deletion scopes:
+//   visitor        ids=[profile ids]     → every visit, click and identity row for those profiles
+//   visit          ids=[page_view ids]   → those visits (+ engagement inside each visit's window)
+//   engagement     ids=[engagement ids]  → those click/heartbeat rows
+//   all_visits                           → all visits + identity corrections (keeps engagement)
+//   all_engagement                       → all engagement rows (keeps visits)
+//   all                                  → everything above
+// Each mutation is logged with per-table row counts for auditing.
+async function handleDelete(request, env) {
+  const mutation = await identityMutationRequest(request, env);
+  if (mutation.response) return mutation.response;
+  const { body, headers: h } = mutation;
+
+  // Destructive operations are rate-limited per IP (20 / minute) as a safety net.
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const allowed = await checkRateLimit(env.DB, ip, 'delete', 60, 20);
+  if (!allowed) return Response.json({ error: 'rate_limited' }, { status: 429, headers: h });
+
+  const scope = String(body.scope || '');
+  const db = env.DB;
+
+  try {
+    if (scope === 'all' || scope === 'all_visits' || scope === 'all_engagement') {
+      const ops = [];
+      if (scope !== 'all_engagement') {
+        // Identity corrections are derived from visits, so they clear alongside them.
+        ops.push(
+          ['visitor_visit_events', db.prepare('DELETE FROM visitor_visit_events')],
+          ['visitor_visit_overrides', db.prepare('DELETE FROM visitor_visit_overrides')],
+          ['visitor_identity_events', db.prepare('DELETE FROM visitor_identity_events')],
+          ['visitor_identity_links', db.prepare('DELETE FROM visitor_identity_links')],
+          ['page_views', db.prepare('DELETE FROM page_views')],
+        );
+      }
+      if (scope !== 'all_visits') {
+        ops.push(['page_engagement', db.prepare('DELETE FROM page_engagement')]);
+      }
+      const results = await db.batch(ops.map(o => o[1]));
+      const deleted = {};
+      ops.forEach((o, i) => { deleted[o[0]] = chg(results[i]); });
+      console.log(JSON.stringify({ event: 'data_deleted', scope, deleted }));
+      return Response.json({ ok: true, scope, deleted }, { headers: h });
+    }
+
+    if (scope === 'visitor') {
+      const ids = dedupeIds(body.ids).filter(validVisitorId).slice(0, 50);
+      if (!ids.length) return Response.json({ error: 'bad_ids' }, { status: 400, headers: h });
+
+      // Resolve each profile's raw member IDs and page_view IDs. Identity links and
+      // per-visit overrides can move visits under a canonical profile, so a profile
+      // delete must reach all three: raw visitors, canonical profile, and view IDs.
+      const ph = ids.map(() => '?').join(',');
+      const [membersRes, linksRes, viewsRes] = await Promise.all([
+        db.prepare(
+          `SELECT DISTINCT v.visitor_id AS original_id
+           FROM page_views v
+           LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
+           LEFT JOIN visitor_identity_links il ON il.visitor_id = COALESCE(ov.profile_id, v.visitor_id)
+           WHERE COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) IN (${ph})`
+        ).bind(...ids).all(),
+        db.prepare(`SELECT visitor_id FROM visitor_identity_links WHERE canonical_id IN (${ph})`).bind(...ids).all(),
+        db.prepare(
+          `SELECT v.id
+           FROM page_views v
+           LEFT JOIN visitor_visit_overrides ov ON ov.page_view_id = v.id
+           LEFT JOIN visitor_identity_links il ON il.visitor_id = COALESCE(ov.profile_id, v.visitor_id)
+           WHERE COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) IN (${ph})`
+        ).bind(...ids).all(),
+      ]);
+      const memberIds = dedupeIds([...ids, ...(linksRes.results || []).map(r => r.visitor_id), ...(membersRes.results || []).map(r => r.original_id)]).slice(0, 500);
+      const profileIds = dedupeIds([...ids, ...(linksRes.results || []).map(r => r.visitor_id)]).slice(0, 500);
+      const viewIds = dedupeIds((viewsRes.results || []).map(r => r.id)).slice(0, 1000);
+
+      const sets = [['m', memberIds], ['p', profileIds], ['v', viewIds]];
+      const ctes = cteValues(sets);
+      const bindAll = memberIds.concat(profileIds, viewIds);
+      const results = await db.batch([
+        db.prepare(`${ctes} DELETE FROM visitor_visit_events WHERE original_id IN (SELECT id FROM m) OR profile_id IN (SELECT id FROM p) OR page_view_id IN (SELECT id FROM v)`).bind(...bindAll),
+        db.prepare(`${ctes} DELETE FROM visitor_visit_overrides WHERE profile_id IN (SELECT id FROM p) OR page_view_id IN (SELECT id FROM v)`).bind(...bindAll),
+        db.prepare(`${ctes} DELETE FROM visitor_identity_links WHERE visitor_id IN (SELECT id FROM m) OR canonical_id IN (SELECT id FROM p)`).bind(...bindAll),
+        db.prepare(`${ctes} DELETE FROM visitor_identity_events WHERE source_id IN (SELECT id FROM p) OR target_id IN (SELECT id FROM p)`).bind(...bindAll),
+        db.prepare(`${ctes} DELETE FROM page_engagement WHERE visitor_id IN (SELECT id FROM m)`).bind(...bindAll),
+        db.prepare(`${ctes} DELETE FROM page_views WHERE id IN (SELECT id FROM v)`).bind(...bindAll),
+      ]);
+      const deleted = {
+        visit_events: chg(results[0]),
+        visit_overrides: chg(results[1]),
+        identity_links: chg(results[2]),
+        identity_events: chg(results[3]),
+        engagement: chg(results[4]),
+        page_views: chg(results[5]),
+      };
+      console.log(JSON.stringify({ event: 'data_deleted', scope, profiles: ids.length, deleted }));
+      return Response.json({ ok: true, scope, deleted }, { headers: h });
+    }
+
+    if (scope === 'engagement') {
+      const ids = dedupeIds(body.ids).map(n => parseInt(n, 10)).filter(n => Number.isInteger(n) && n > 0).slice(0, 200);
+      if (!ids.length) return Response.json({ error: 'bad_ids' }, { status: 400, headers: h });
+      const ph = ids.map(() => '?').join(',');
+      const r = await db.prepare(`DELETE FROM page_engagement WHERE id IN (${ph})`).bind(...ids).run();
+      const deleted = { engagement: chg(r) };
+      console.log(JSON.stringify({ event: 'data_deleted', scope, deleted }));
+      return Response.json({ ok: true, scope, deleted }, { headers: h });
+    }
+
+    if (scope === 'visit') {
+      const ids = dedupeIds(body.ids).map(n => parseInt(n, 10)).filter(n => Number.isInteger(n) && n > 0).slice(0, 100);
+      if (!ids.length) return Response.json({ error: 'bad_ids' }, { status: 400, headers: h });
+      const ph = ids.map(() => '?').join(',');
+      const { results: rows } = await db.prepare(
+        `SELECT id, visitor_id, created_at FROM page_views WHERE id IN (${ph})`
+      ).bind(...ids).all();
+      if (!rows || !rows.length) {
+        return Response.json({ ok: true, scope, deleted: { page_views: 0, engagement: 0 } }, { headers: h });
+      }
+
+      // Engagement has no FK to page_views, so attribute each click/heartbeat to the
+      // visit it followed: [this visit, next visit) per raw visitor ID. Deleting
+      // consecutive visits tiles the windows, removing exactly their engagement.
+      const originalIds = [...new Set(rows.map(r => r.visitor_id))];
+      const oph = originalIds.map(() => '?').join(',');
+      const { results: allVisits } = await db.prepare(
+        `SELECT visitor_id, created_at FROM page_views WHERE visitor_id IN (${oph}) ORDER BY visitor_id ASC, created_at ASC`
+      ).bind(...originalIds).all();
+      const timesByVisitor = {};
+      for (const v of (allVisits || [])) (timesByVisitor[v.visitor_id] = timesByVisitor[v.visitor_id] || []).push(v.created_at);
+      const windows = [];
+      for (const r of rows) {
+        const arr = timesByVisitor[r.visitor_id] || [];
+        let next = null;
+        for (const t of arr) { if (t > r.created_at) { next = t; break; } }
+        windows.push({ vid: r.visitor_id, start: r.created_at, end: next || '9999-12-31 23:59:59' });
+      }
+
+      const stmts = [
+        db.prepare(`DELETE FROM visitor_visit_overrides WHERE page_view_id IN (${ph})`).bind(...ids),
+        db.prepare(`DELETE FROM visitor_visit_events WHERE page_view_id IN (${ph})`).bind(...ids),
+      ];
+      for (let i = 0; i < windows.length; i += 30) {
+        const chunk = windows.slice(i, i + 30);
+        const clause = chunk.map(() => '(visitor_id = ? AND created_at >= ? AND created_at < ?)').join(' OR ');
+        const params = [];
+        chunk.forEach(w => params.push(w.vid, w.start, w.end));
+        stmts.push(db.prepare(`DELETE FROM page_engagement WHERE ${clause}`).bind(...params));
+      }
+      stmts.push(db.prepare(`DELETE FROM page_views WHERE id IN (${ph})`).bind(...ids));
+
+      const results = await db.batch(stmts);
+      const last = results.length - 1;
+      const engagement = results.slice(2, last).reduce((a, r) => a + chg(r), 0);
+      const deleted = {
+        visit_overrides: chg(results[0]),
+        visit_events: chg(results[1]),
+        engagement,
+        page_views: chg(results[last]),
+      };
+      console.log(JSON.stringify({ event: 'data_deleted', scope, deleted }));
+      return Response.json({ ok: true, scope, deleted }, { headers: h });
+    }
+
+    return Response.json({ error: 'bad_scope' }, { status: 400, headers: h });
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'delete_error', scope, error: err instanceof Error ? err.message : String(err) }));
+    return Response.json({ error: 'delete_failed' }, { status: 500, headers: h });
+  }
+}
+
+function chg(r) { return (r && r.changes) || 0; }
+
+function dedupeIds(arr) {
+  return [...new Set((Array.isArray(arr) ? arr : []).map(String).filter(Boolean))];
+}
+
+// Build a `WITH name(id) AS (VALUES (?),...)` prefix for each [name, values] pair.
+// Empty sets become `(SELECT NULL WHERE 0)` so the CTE stays valid and matches nothing.
+function cteValues(pairs) {
+  return 'WITH ' + pairs.map(function (p) {
+    const name = p[0], values = p[1] || [];
+    if (!values.length) return name + '(id) AS (SELECT NULL WHERE 0)';
+    return name + '(id) AS (VALUES ' + values.map(function () { return '(?)'; }).join(',') + ')';
+  }).join(', ');
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FP_RE = /^fp-[0-9a-f]{12}$/;
 const VID_COOKIE = 'vid2';
@@ -1148,7 +1337,7 @@ async function queryEngagement(db) {
 
   // Per-click log — newest first, with the visitor's latest known location
   const { results: clickDetails } = await db.prepare(
-    `SELECT pe.created_at, pe.visitor_id, COALESCE(il.canonical_id, pe.visitor_id) AS profile_id, pe.target, pe.section, pe.cls, pe.href, pe.x, pe.y,
+    `SELECT pe.id AS id, pe.created_at, pe.visitor_id, COALESCE(il.canonical_id, pe.visitor_id) AS profile_id, pe.target, pe.section, pe.cls, pe.href, pe.x, pe.y,
             pe.action_id, pe.label_quality, pe.source, pe.interaction, pe.viewport_w, pe.viewport_h,
             (SELECT v.city    FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS city,
             (SELECT v.region  FROM page_views v WHERE v.visitor_id = pe.visitor_id ORDER BY v.created_at DESC LIMIT 1) AS region,
@@ -1186,7 +1375,7 @@ async function queryTopCountries(db) {
 
 async function queryRecent(db) {
   const { results } = await db.prepare(
-    `SELECT v.created_at, v.country, v.city, v.region, v.referrer, v.page_url, v.visitor_id, v.user_agent,
+    `SELECT v.id, v.created_at, v.country, v.city, v.region, v.referrer, v.page_url, v.visitor_id, v.user_agent,
             COALESCE(il.canonical_id, ov.profile_id, v.visitor_id) AS profile_id,
             v.device_type, v.os, v.browser, v.latitude, v.longitude, v.postal_code, v.isp, v.language
      FROM page_views v
@@ -1512,8 +1701,9 @@ const DASHBOARD_CLIENT_JS = String.raw`
   var _allClicks=[];
   function rowHtml(v){
     var vid=v.profile_id||v.visitor_id||'';
+    var rid=String(v.id==null?'':v.id);
     var isNew=(Date.now()-new Date(v.created_at+'Z').getTime())<3600000;
-    return '<tr data-vid="'+escH(vid)+'"'+(isNew?' class="new-visit"':'')+'><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+(isNew?' <span class="badge-new">NEW</span>':'')+'</div></td><td>'+locH(v)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge" title="Original ID: '+escH(v.visitor_id||'')+'">'+escH(vid.slice(0,8))+'</span></td></tr>';
+    return '<tr data-vid="'+escH(vid)+'"'+(isNew?' class="new-visit"':'')+'><td class="sel-col"><input type="checkbox" class="chk row-chk" data-kind="visit" data-id="'+escH(rid)+'" aria-label="Select visit"></td><td><div>'+fmtH(v.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(v.created_at)+(isNew?' <span class="badge-new">NEW</span>':'')+'</div></td><td>'+locH(v)+'</td><td style="font-size:0.78rem">'+devH(v)+'</td><td>'+refLinkH(v.referrer,30)+'</td><td><span class="badge" title="Original ID: '+escH(v.visitor_id||'')+'">'+escH(vid.slice(0,8))+'</span></td><td class="act-col"><button type="button" class="row-del" data-kind="visit" data-id="'+escH(rid)+'" title="Delete this visit">🗑</button></td></tr>';
   }
   function renderRecent(){
     var rt=document.getElementById('recentTbody');
@@ -1525,11 +1715,13 @@ const DASHBOARD_CLIENT_JS = String.raw`
       var hay=[v.city,v.region,v.country,v.device_type,v.os,v.browser,v.isp,v.postal_code,v.visitor_id,v.profile_id,v.referrer].filter(Boolean).join(' ').toLowerCase();
       return hay.indexOf(q)!==-1;
     });}
-    rt.innerHTML=rv.length?rv.map(rowHtml).join(''):'<tr><td colspan="5" class="empty-state">No visits match your filter</td></tr>';
+    rt.innerHTML=rv.length?rv.map(rowHtml).join(''):'<tr><td colspan="7" class="empty-state">No visits match your filter</td></tr>';
+    updateBulkBar('recent');
   }
   // ── Click detail rows (filled from /stats engagement.clickDetails) ──
   function clickRowHtml(c){
     var vid=c.profile_id||c.visitor_id||'';
+    var cid=String(c.id==null?'':c.id);
     var sec=c.section?escH(truncH(c.section,28)):'—';
     var quality=['named','inferred','unknown'].indexOf(c.label_quality)>=0?c.label_quality:'legacy';
     var raw=c.target||'';
@@ -1541,12 +1733,13 @@ const DASHBOARD_CLIENT_JS = String.raw`
     if(c.href&&/^https?:\/\//i.test(c.href))link='<a href="'+escH(c.href)+'" target="_blank" rel="noopener noreferrer" class="click-destination">'+escH(truncH(String(c.href).replace(/^https?:\/\//,''),34))+'</a>';
     var pos=c.interaction==='non-pointer'?'Non-pointer':(c.x!=null&&c.y!=null)?c.x+','+c.y:'—';
     if(c.viewport_w&&c.viewport_h)pos+='<small>'+c.viewport_w+' × '+c.viewport_h+' viewport</small>';
-    return '<tr data-vid="'+escH(vid)+'"><td><div>'+fmtH(c.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(c.created_at)+'</div></td><td><span class="badge" title="Original ID: '+escH(c.visitor_id||'')+'">'+escH(vid.slice(0,8))+'</span></td><td>'+locH(c)+'</td><td style="font-size:0.78rem">'+sec+'</td><td style="font-size:0.78rem">'+tgt+'</td><td>'+link+'</td><td style="font-size:0.72rem;color:var(--muted)">'+pos+'</td></tr>';
+    return '<tr data-vid="'+escH(vid)+'"><td class="sel-col"><input type="checkbox" class="chk row-chk" data-kind="engagement" data-id="'+escH(cid)+'" aria-label="Select interaction"></td><td><div>'+fmtH(c.created_at)+'</div><div style="font-size:0.7rem;color:var(--muted)">'+agoH(c.created_at)+'</div></td><td><span class="badge" title="Original ID: '+escH(c.visitor_id||'')+'">'+escH(vid.slice(0,8))+'</span></td><td>'+locH(c)+'</td><td style="font-size:0.78rem">'+sec+'</td><td style="font-size:0.78rem">'+tgt+'</td><td>'+link+'</td><td style="font-size:0.72rem;color:var(--muted)">'+pos+'</td><td class="act-col"><button type="button" class="row-del" data-kind="engagement" data-id="'+escH(cid)+'" title="Delete this interaction">🗑</button></td></tr>';
   }
   function renderClicks(){
     var tb=document.getElementById('clickTbody');
     if(!tb)return;
-    tb.innerHTML=_allClicks.length?_allClicks.map(clickRowHtml).join(''):'<tr><td colspan="7" class="empty-state">No click data yet — appears as visitors interact</td></tr>';
+    tb.innerHTML=_allClicks.length?_allClicks.map(clickRowHtml).join(''):'<tr><td colspan="9" class="empty-state">No click data yet — appears as visitors interact</td></tr>';
+    updateBulkBar('click');
   }
   var _dashSig='';
   function refresh(){
@@ -1757,6 +1950,93 @@ const DASHBOARD_CLIENT_JS = String.raw`
       .catch(function(){alert('Network error');btn.disabled=false;btn.textContent='Reset';});
   });
 
+  // ── Delete data: per-visit, per-interaction, per-profile, bulk + danger zone ──
+  function apiDelete(scope,ids){
+    return fetch('/api/delete',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope:scope,ids:ids||[]})})
+      .then(function(r){return r.json().catch(function(){return{ok:false,error:'bad_response'};});});
+  }
+  function selectedIds(tbodyId){
+    var out=[],body=document.getElementById(tbodyId);
+    if(!body)return out;
+    Array.prototype.forEach.call(body.querySelectorAll('.row-chk:checked'),function(c){var id=c.getAttribute('data-id');if(id)out.push(id);});
+    return out;
+  }
+  function updateBulkBar(which){
+    var isRecent=which==='recent';
+    var tbody=document.getElementById(isRecent?'recentTbody':'clickTbody');
+    if(!tbody)return;
+    var bar=document.getElementById(isRecent?'recentBulk':'clickBulk');
+    var cnt=document.getElementById(isRecent?'recentSelCount':'clickSelCount');
+    var all=document.getElementById(isRecent?'recentAll':'clickAll');
+    var n=selectedIds(isRecent?'recentTbody':'clickTbody').length;
+    if(cnt)cnt.textContent=n;
+    if(bar)bar.hidden=(n===0);
+    if(all)all.checked=(n>0&&n===tbody.querySelectorAll('.row-chk').length);
+  }
+  document.addEventListener('change',function(e){
+    var t=e.target;if(!t)return;
+    if(t.classList&&t.classList.contains('row-chk')){updateBulkBar(t.closest('#clickTbody')?'click':'recent');}
+    else if(t.id==='recentAll'||t.id==='clickAll'){
+      var which=t.id==='recentAll'?'recent':'click';
+      Array.prototype.forEach.call(document.getElementById(which==='recent'?'recentTbody':'clickTbody').querySelectorAll('.row-chk'),function(c){c.checked=t.checked;});
+      updateBulkBar(which);
+    }
+  });
+  function runDelete(scope,ids,opts){
+    opts=opts||{};
+    var btn=opts.btn;
+    if(btn){btn.disabled=true;btn.dataset.t=btn.textContent;btn.textContent=opts.busy||'Deleting…';}
+    return apiDelete(scope,ids).then(function(d){
+      if(d&&d.ok){location.reload();return;}
+      alert('Delete failed: '+((d&&d.error)||'unknown'));
+      if(btn){btn.disabled=false;btn.textContent=btn.dataset.t||'Delete';}
+    }).catch(function(){alert('Network error');if(btn){btn.disabled=false;btn.textContent=btn.dataset.t||'Delete';}});
+  }
+  document.addEventListener('click',function(e){
+    var del=e.target.closest('.row-del');
+    if(del){
+      e.preventDefault();e.stopPropagation();
+      var kind=del.getAttribute('data-kind'),id=del.getAttribute('data-id');
+      if(!kind||!id)return;
+      if(!confirm('Delete '+(kind==='visit'?'this visit and its activity':'this interaction')+'? This cannot be undone.'))return;
+      runDelete(kind,[id],{btn:del,busy:'…'});
+      return;
+    }
+    var pd=e.target.closest('.profile-delete');
+    if(pd){
+      e.preventDefault();e.stopPropagation();
+      var vid=pd.getAttribute('data-vid');if(!vid)return;
+      if(!confirm('Delete profile '+vid.slice(0,10)+' and ALL of its visits, interactions and identity links? This cannot be undone.'))return;
+      runDelete('visitor',[vid],{btn:pd,busy:'Deleting…'});
+      return;
+    }
+    if(e.target.closest('#recentBulkDelete')){
+      var rids=selectedIds('recentTbody');if(!rids.length)return;
+      if(!confirm('Delete '+rids.length+' selected visit'+(rids.length>1?'s':'')+' and their activity? This cannot be undone.'))return;
+      runDelete('visit',rids,{btn:document.getElementById('recentBulkDelete')});
+      return;
+    }
+    if(e.target.closest('#clickBulkDelete')){
+      var cids=selectedIds('clickTbody');if(!cids.length)return;
+      if(!confirm('Delete '+cids.length+' selected interaction'+(cids.length>1?'s':'')+'? This cannot be undone.'))return;
+      runDelete('engagement',cids,{btn:document.getElementById('clickBulkDelete')});
+      return;
+    }
+    if(e.target.closest('#recentClearSel')){Array.prototype.forEach.call(document.getElementById('recentTbody').querySelectorAll('.row-chk'),function(c){c.checked=false;});updateBulkBar('recent');return;}
+    if(e.target.closest('#clickClearSel')){Array.prototype.forEach.call(document.getElementById('clickTbody').querySelectorAll('.row-chk'),function(c){c.checked=false;});updateBulkBar('click');return;}
+    var dz=e.target.closest('.danger-btn[data-danger]');
+    if(dz){
+      var scope=dz.getAttribute('data-danger');
+      var msg=scope==='all'?'Delete ALL analytics data (every visit, interaction, engagement row and identity link)? This cannot be undone.'
+        :scope==='all_visits'?'Delete ALL visits and identity corrections? Clicks/engagement are kept. This cannot be undone.'
+        :'Delete ALL clicks & engagement? Visits are kept. This cannot be undone.';
+      if(!confirm(msg))return;
+      if(scope==='all'&&!confirm('Final confirmation — permanently erase all analytics data?'))return;
+      runDelete(scope,[],{btn:dz,busy:'Deleting…'});
+      return;
+    }
+  });
+
   // ── Saved visitor profiles (local browser preference) ──
   var FAVORITES_KEY='dash-favorites';
   function getFavorites(){try{var v=localStorage.getItem(FAVORITES_KEY);return v?JSON.parse(v):[];}catch(e){return[];}}
@@ -1870,7 +2150,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   const refSig = ((referrers && referrers[0] && referrers[0].count) || 0) + '|' + (referrers ? referrers.length : 0);
   const ccSig = ((countries && countries[0] && countries[0].count) || 0) + '|' + (countries ? countries.length : 0);
   const dashSeed = JSON.stringify({
-    recent: visits.map(v => ({ created_at: v.created_at, city: v.city, region: v.region, country: v.country,
+    recent: visits.map(v => ({ id: v.id, created_at: v.created_at, city: v.city, region: v.region, country: v.country,
       referrer: v.referrer, visitor_id: v.visitor_id, profile_id: v.profile_id, device_type: v.device_type, os: v.os, browser: v.browser,
       isp: v.isp, postal_code: v.postal_code, latitude: v.latitude, longitude: v.longitude })),
     clicks: (engagement && engagement.clickDetails) || [],
@@ -1887,14 +2167,17 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     const browser = esc(v.browser || '');
     const dev = esc(v.device_type || '');
     const vid = v.profile_id || v.visitor_id || '';
+    const rid = String(v.id == null ? '' : v.id);
     return '<tr data-vid="' + esc(vid) + '"' + (recent ? ' class="new-visit"' : '') + '>'
+      + '<td class="sel-col"><input type="checkbox" class="chk row-chk" data-kind="visit" data-id="' + esc(rid) + '" aria-label="Select visit"></td>'
       + '<td><div>' + formatTime(v.created_at) + '</div><div style="font-size:0.7rem;color:var(--muted)">' + ago + (recent ? ' <span class="badge-new">NEW</span>' : '') + '</div></td>'
       + '<td>' + esc(loc) + coordH(v) + '</td>'
       + '<td style="font-size:0.78rem">' + (dev ? '<span class="badge">' + dev + '</span> ' : '') + ' ' + esc([os, browser].filter(Boolean).join(' · ') || '—') + '</td>'
       + '<td>' + (v.referrer
         ? '<a href="' + esc(v.referrer) + '" rel="noreferrer" style="color:var(--accent);text-decoration:none">' + truncate(esc(v.referrer), 30) + '</a>'
         : 'Direct') + '</td>'
-      + '<td><span class="badge" title="Original ID: ' + esc(v.visitor_id || '') + '">' + esc(vid.slice(0, 8)) + '</span></td></tr>';
+      + '<td><span class="badge" title="Original ID: ' + esc(v.visitor_id || '') + '">' + esc(vid.slice(0, 8)) + '</span></td>'
+      + '<td class="act-col"><button type="button" class="row-del" data-kind="visit" data-id="' + esc(rid) + '" title="Delete this visit">🗑</button></td></tr>';
   }).join('');
   const countryChips = countries.length ? countries.map(c =>
     '<span class="country-chip"><strong>' + c.count + '</strong> ' + flag(c.country) + ' ' + esc(c.country) + '</span>'
@@ -2076,6 +2359,37 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
   .reset-eng:hover{background:rgba(211,47,47,0.12);border-color:#c62828}
   html[data-theme="dark"] .reset-eng{color:#ef9a9a;border-color:rgba(239,154,154,0.4);background:rgba(211,47,47,0.15)}
   html[data-theme="dark"] .reset-eng:hover{background:rgba(211,47,47,0.25)}
+  /* Delete controls */
+  .sel-col{width:34px;text-align:center}
+  .act-col{width:44px;text-align:center}
+  .chk{width:16px;height:16px;cursor:pointer;accent-color:var(--accent);vertical-align:middle}
+  .row-del{background:none;border:1px solid transparent;border-radius:8px;cursor:pointer;font-size:0.9rem;line-height:1;padding:4px 7px;color:var(--muted);transition:all 0.15s}
+  .row-del:hover{color:#c62828;border-color:rgba(211,47,47,0.4);background:rgba(211,47,47,0.08)}
+  html[data-theme="dark"] .row-del:hover{color:#ef9a9a;border-color:rgba(239,154,154,0.4);background:rgba(211,47,47,0.16)}
+  .row-del[disabled]{opacity:0.5;cursor:default}
+  .bulkbar{display:flex;align-items:center;gap:0.75rem;margin-bottom:0.85rem;padding:0.55rem 0.9rem;border-radius:var(--radius-sm);
+    background:var(--accent-soft);border:1px solid var(--border);font-size:0.8rem;font-weight:600}
+  .bulkbar[hidden]{display:none}
+  .bulkbar .spacer{flex:1}
+  .danger-btn{font-size:0.72rem;padding:5px 12px;border-radius:8px;border:1px solid rgba(211,47,47,0.5);background:rgba(211,47,47,0.08);
+    color:#c62828;cursor:pointer;font-family:inherit;font-weight:700;letter-spacing:0.02em;transition:all 0.15s}
+  .danger-btn:hover{background:rgba(211,47,47,0.16);border-color:#c62828}
+  html[data-theme="dark"] .danger-btn{color:#ef9a9a;border-color:rgba(239,154,154,0.45);background:rgba(211,47,47,0.18)}
+  html[data-theme="dark"] .danger-btn:hover{background:rgba(211,47,47,0.3)}
+  .danger-btn[disabled]{opacity:0.55;cursor:default;transform:none}
+  .ghost-btn{font-size:0.72rem;padding:5px 12px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text);
+    cursor:pointer;font-family:inherit;font-weight:600;transition:all 0.15s}
+  .ghost-btn:hover{border-color:var(--accent);color:var(--accent)}
+  .danger-zone{border:1px solid rgba(211,47,47,0.35)!important;margin-top:1.5rem}
+  html[data-theme="dark"] .danger-zone{border-color:rgba(239,154,154,0.35)!important}
+  .danger-zone h2{color:#c62828}
+  html[data-theme="dark"] .danger-zone h2{color:#ef9a9a}
+  .danger-zone p{font-size:0.8rem;color:var(--muted);margin-bottom:1rem;line-height:1.5}
+  .danger-actions{display:flex;flex-wrap:wrap;gap:0.6rem}
+  .profile-delete{font-size:0.68rem;padding:3px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.5);cursor:pointer;font-weight:500;transition:all 0.15s;color:var(--text)}
+  .profile-delete:hover{border-color:#c62828;color:#c62828;background:rgba(211,47,47,0.08)}
+  html[data-theme="dark"] .profile-delete{background:rgba(255,255,255,0.06)}
+  html[data-theme="dark"] .profile-delete:hover{color:#ef9a9a;border-color:#ef9a9a;background:rgba(211,47,47,0.16)}
   .profile-card.is-favorite{border:2px solid #f59e0b;box-shadow:inset 0 1px 0 rgba(255,255,255,0.7),0 0 24px rgba(245,158,11,0.15),0 8px 32px rgba(0,0,0,0.08)}
   .profile-card.is-favorite .favorite-btn{background:rgba(245,158,11,0.15);color:#b45309;border-color:#f59e0b}
   html[data-theme="dark"] .profile-card.is-favorite{border-color:#fbbf24;box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 0 24px rgba(251,191,36,0.18)}
@@ -2206,10 +2520,16 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
       <span style="font-size:0.72rem;color:var(--muted)">Latest 60 interactions &middot; saved profiles are highlighted</span>
     </div>
     <p class="click-explainer">Named controls are identified by the site. Inferred controls use browser semantics. Unidentified and earlier interactions are not guesses; positions are viewport coordinates, not proof of a button.</p>
+    <div class="bulkbar" id="clickBulk" hidden>
+      <span><strong id="clickSelCount">0</strong>&nbsp;selected</span>
+      <span class="spacer"></span>
+      <button type="button" class="ghost-btn" id="clickClearSel">Clear</button>
+      <button type="button" class="danger-btn" id="clickBulkDelete">Delete selected</button>
+    </div>
     <div class="table-scroll-x">
       <table>
-        <thead><tr><th>Time (CST)</th><th>Visitor</th><th>Location</th><th>Section</th><th>Interaction</th><th>Destination</th><th>Viewport position</th></tr></thead>
-        <tbody id="clickTbody"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody>
+        <thead><tr><th class="sel-col"><input type="checkbox" class="chk" id="clickAll" aria-label="Select all interactions"></th><th>Time (CST)</th><th>Visitor</th><th>Location</th><th>Section</th><th>Interaction</th><th>Destination</th><th>Viewport position</th><th class="act-col"></th></tr></thead>
+        <tbody id="clickTbody"><tr><td colspan="9" class="empty-state">Loading…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -2249,7 +2569,7 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
     var citiesStr = p.cities.slice(0,3).join(', ') + (p.cities.length>3 ? ' +'+(p.cities.length-3) : '');
     var times = p.timezones && p.timezones.filter(Boolean).join(', ') || '';
     var members = p.members.length > 1 ? '<div class="identity-members"><span class="identity-note">Linked IDs</span>' + p.members.map(function(id){return '<span class="identity-chip" title="'+esc(id)+'">'+esc(id.slice(0,10))+(id!==p.id?' <button type="button" class="profile-separate" data-member="'+esc(id)+'" data-canonical="'+esc(p.id)+'" aria-label="Unlink '+esc(id)+'">Unlink</button>':'')+'</span>';}).join('') + '</div>' : '';
-    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div>'+members+'<div class="profile-actions"><button class="favorite-btn" data-vid="'+esc(p.id)+'" title="Save profile for quick review">☆ Save</button><button class="profile-review" data-vid="'+esc(p.id)+'" title="Inspect and correct individual visits">Review visits</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Keep this card and add another profile to it">Combine with another…</button></div></div>';
+    return '<div class="profile-card" data-vid="'+esc(p.id)+'"'+(p.lastSeen?' data-lastseen="'+esc(p.lastSeen)+'"':'')+'><div class="profile-head"><span class="profile-icon">'+devIcon+'</span><span class="profile-name" title="'+esc(p.id)+'">'+esc(visitorName)+'</span><span class="prob prob-'+probClass+'">'+prob+'</span></div><div class="profile-visits"><strong>'+p.visits+'</strong> visits '+(p.lastSeen?'<span style="font-size:0.7rem;color:var(--muted)">since '+formatTime(p.firstSeen).split(',')[0].trim()+'</span>':'')+'</div><div class="profile-loc">📍 '+esc(citiesStr)+'</div><div class="profile-meta">'+esc(os||'')+(browser?' · '+esc(browser):'')+(ispList?'<br>📡 '+esc(ispList):'')+(ipList?'<br>🔑 '+ipList:'')+(times?'<br>🕐 '+esc(times):'')+(p.lastSeen?'<br>⚠️ <strong>Last seen '+timeAgo(p.lastSeen)+'</strong>':'')+'</div>'+members+'<div class="profile-actions"><button class="favorite-btn" data-vid="'+esc(p.id)+'" title="Save profile for quick review">☆ Save</button><button class="profile-review" data-vid="'+esc(p.id)+'" title="Inspect and correct individual visits">Review visits</button><button class="profile-merge" data-vid="'+esc(p.id)+'" title="Keep this card and add another profile to it">Combine with another…</button><button class="profile-delete" data-kind="visitor" data-vid="'+esc(p.id)+'" title="Delete this profile and all of its visits and clicks">Delete</button></div></div>';
   }).join('') + '</div><div class="identity-history"><h3>Identity activity</h3>' + (identityEvents.length ? '<ul>' + identityEvents.map(function(ev){var summary=ev.action==='merge'?'Combined '+ev.affected.length+' ID'+(ev.affected.length===1?'':'s'):ev.action==='separate'?'Unlinked an ID':ev.action==='move'?'Moved visit #'+ev.viewId:'Restored visit #'+ev.viewId;return '<li>'+formatTime(ev.createdAt)+' · '+summary+(ev.target?' → '+esc(ev.target.slice(0,10)):'')+'</li>';}).join('')+'</ul>' : '<p class="identity-note">No identity changes yet.</p>') + '</div></div>' : ''}
 
   <dialog class="identity-dialog" id="identityDialog" aria-labelledby="identityDialogTitle">
@@ -2304,11 +2624,27 @@ function dashboardHtml(totals, countries, visits, trend, referrers, engagement, 
         <input type="text" id="recentSearch" placeholder="Filter visits…" autocomplete="off" aria-label="Filter visits">
       </div>
     </div>
+    <div class="bulkbar" id="recentBulk" hidden>
+      <span><strong id="recentSelCount">0</strong>&nbsp;selected</span>
+      <span class="spacer"></span>
+      <button type="button" class="ghost-btn" id="recentClearSel">Clear</button>
+      <button type="button" class="danger-btn" id="recentBulkDelete">Delete selected</button>
+    </div>
     <div class="table-scroll-x">
       <table>
-        <thead><tr><th>Time (CST)</th><th>Approx. area</th><th>Device · OS</th><th>Source</th><th>Profile</th></tr></thead>
+        <thead><tr><th class="sel-col"><input type="checkbox" class="chk" id="recentAll" aria-label="Select all visits"></th><th>Time (CST)</th><th>Approx. area</th><th>Device · OS</th><th>Source</th><th>Profile</th><th class="act-col"></th></tr></thead>
         <tbody id="recentTbody">${recentRows}</tbody>
       </table>
+    </div>
+  </div>
+
+  <div class="card danger-zone">
+    <h2>Danger Zone</h2>
+    <p>Permanently delete analytics data. These actions run immediately and cannot be undone. Dashboard sessions and rate-limit data are never touched.</p>
+    <div class="danger-actions">
+      <button type="button" class="danger-btn" data-danger="all_visits">Delete all visits</button>
+      <button type="button" class="danger-btn" data-danger="all_engagement">Delete all clicks &amp; engagement</button>
+      <button type="button" class="danger-btn" data-danger="all">Delete ALL data</button>
     </div>
   </div>
   <div class="auto-refresh"><span class="dot"></span> Auto-refreshes every 60s &middot; All times in CST</div>
